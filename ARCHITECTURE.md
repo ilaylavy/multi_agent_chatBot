@@ -1,0 +1,318 @@
+# Multi-Agent RAG System — Architecture Reference
+
+> This file is the single source of truth for all architectural decisions.
+> Claude Code must read this file at the start of every session before writing any code.
+> Do not deviate from decisions recorded here without explicit user instruction.
+
+---
+
+## What This System Does
+
+Accepts natural language questions from users via a web app.
+Routes queries to the correct data sources (PDFs and/or structured tables).
+Verifies every answer before returning it to the user.
+Returns a verified, source-backed answer — or an honest failure message.
+
+---
+
+## Tech Stack
+
+| Component             | Choice              | Notes                                              |
+|-----------------------|---------------------|----------------------------------------------------|
+| Framework             | LangGraph           | Explicit graph nodes + edges, full state control   |
+| Language              | Python 3.11+        |                                                    |
+| LLM Provider (v1)     | OpenAI GPT-4o       | Per-agent config — any agent can swap provider     |
+| Vector DB             | ChromaDB (local)    | Fully local, no infrastructure                     |
+| PDF Parsing           | pymupdf4llm         | Handles tables inside PDFs                         |
+| Structured Data       | CSV + SQLite        | CSV via Pandas, relational via SQLite              |
+| State Typing          | Pydantic TypedDict  |                                                    |
+| Web Framework         | FastAPI             |                                                    |
+| Observability         | LangSmith           | Enabled from day one                               |
+| Reranker (v2)         | FlashRank           | Slot reserved in Librarian, not yet implemented    |
+
+---
+
+## Project File Structure
+
+```
+project/
+├── agents/
+│   ├── __init__.py
+│   ├── chat.py              # Agent 1: Chat Interface
+│   ├── planner.py           # Agent 2: Planner
+│   ├── router.py            # Agent 3: Router + Worker Registry
+│   ├── librarian.py         # Agent 4: Librarian (PDF search)
+│   ├── data_scientist.py    # Agent 5: Data Scientist (CSV/SQLite)
+│   ├── synthesizer.py       # Agent 6: Synthesizer
+│   └── auditor.py           # Agent 7: Auditor
+├── core/
+│   ├── __init__.py
+│   ├── state.py             # Shared Pydantic TypedDict + Agent Views
+│   ├── llm_config.py        # Per-agent LLM loader
+│   ├── manifest.py          # Manifest loader and validator
+│   └── registry.py          # Worker Registry
+├── data/
+│   ├── pdfs/                # Source PDF files go here
+│   ├── tables/              # CSV and SQLite files go here
+│   ├── chroma_db/           # ChromaDB vector store (auto-created)
+│   ├── manifest_index.yaml  # Planner-facing manifest (lightweight)
+│   └── manifest_detail.yaml # Worker-facing manifest (full schemas)
+├── tests/
+│   ├── __init__.py
+│   ├── test_state.py
+│   ├── test_manifest.py
+│   ├── test_agents.py
+│   └── fixtures.py          # Shared test data and fake states
+├── graph.py                 # LangGraph wiring: nodes + edges
+├── api.py                   # FastAPI endpoints
+├── config.yaml              # Top-level config (paths, limits, flags)
+├── .env                     # API keys — never commit this
+├── .env.example             # Committed template for .env
+├── requirements.txt
+├── .gitignore
+└── ARCHITECTURE.md          # This file
+```
+
+---
+
+## The 7 Agents
+
+### Agent 1 — Chat Agent (The Face)
+- **Job:** Manage conversation session. Receive user query. Format and deliver final answer.
+- **Prompt receives:** `original_query`, `conversation_history`, `final_answer`, `final_sources`
+- **Does NOT see:** plan, worker results, audit notes, retry notes
+- **On retry exhaustion:** Returns "I could not verify an answer for your question."
+
+### Agent 2 — Planner (The Strategist)
+- **Job:** Decompose the user query into tasks. Assign each task to a worker type.
+- **Prompt receives:** `original_query`, `manifest_index` (lightweight), `retry_notes` (on retry only)
+- **Does NOT see:** task results, draft answer, conversation history
+- **Outputs:** Ordered list of Task objects `{ task_id, worker_type, description, source_id }`
+
+### Agent 3 — Router (The Dispatcher)
+- **Job:** Receive task list from Planner. Dispatch to correct workers. Run in parallel where possible.
+- **Prompt receives:** `plan` (task list only)
+- **Uses:** Worker Registry to instantiate agents by name
+- **Parallel execution:** `asyncio.gather` for independent tasks
+
+### Agent 4 — Librarian (Unstructured Data Expert)
+- **Job:** Semantic search over PDFs. Return relevant chunks and source references.
+- **Prompt receives:** its single assigned task + manifest detail for its assigned source ONLY
+- **Does NOT see:** Data Scientist results, other PDFs, query history
+- **Retrieval flow:** ChromaDB → top 20 chunks → [Reranker slot, inactive in v1] → top 5 returned
+- **Returns:** `{ chunk_text, source_pdf, page_number, relevance_score }`
+- **Interface:** Written against abstract `RetrieverInterface` — GraphRAG-ready
+
+### Agent 5 — Data Scientist (Structured Data Expert)
+- **Job:** Query CSV and SQLite sources. Return exact facts and figures.
+- **Prompt receives:** its single assigned task + manifest detail for its assigned table ONLY
+- **Does NOT see:** Librarian results, other tables, query history
+- **Never guesses numbers** — if data is missing, reports to Planner immediately
+- **Returns:** `{ result_value, query_used, table_name, row_count }`
+
+### Agent 6 — Synthesizer (The Assembler)
+- **Job:** Combine all worker results into one coherent draft answer.
+- **Prompt receives:** `original_query`, `plan`, `task_results` (all), `sources_used`
+- **Does NOT see:** conversation history, audit notes, retry count
+- **Rule:** Must not add information not present in worker results
+
+### Agent 7 — Auditor (The Gatekeeper)
+- **Job:** Verify draft answer against the plan. Approve or trigger retry.
+- **Prompt receives:** `original_query`, `plan`, `draft_answer`, `sources_used`
+- **Does NOT see:** conversation history, raw chunks, retry count
+- **PASS:** Releases to Chat Agent
+- **FAIL:** Writes rejection notes, increments retry_count, loops to Planner
+- **Max retries:** 3 — after that, return graceful failure to user
+
+---
+
+## State & Privacy Model
+
+### RULE: Two layers, two purposes. Never confuse them.
+
+**Layer 1 — Full State (Graph Container)**
+One `AgentState` TypedDict. LangGraph reads/writes this at every node.
+LangSmith traces this. It contains everything. Never pass data outside it.
+
+**Layer 2 — Agent Views (Privacy Layer)**
+A view function per agent. Filters the full state down to only what that agent needs.
+The LLM prompt for each agent is built from its view — never from the raw state.
+
+### Full State Schema
+
+```python
+class AgentState(TypedDict):
+    # Input
+    original_query:       str
+    session_id:           str
+    conversation_history: List[Message]
+
+    # Planning
+    plan:                 List[Task]
+    manifest_context:     str
+
+    # Execution
+    task_results:         Dict[str, TaskResult]
+    sources_used:         List[SourceRef]
+    retrieved_chunks:     List[Chunk]          # RAGAS logging
+
+    # Synthesis & Audit
+    draft_answer:         str
+    audit_result:         AuditResult          # PASS | FAIL + notes
+    retry_count:          int                  # Max 3
+    retry_notes:          str
+
+    # Output
+    final_answer:         str
+    final_sources:        List[SourceRef]
+```
+
+### View Table — What Each Agent's LLM Prompt Actually Receives
+
+| Agent          | Fields in prompt                                                      |
+|----------------|-----------------------------------------------------------------------|
+| Chat Agent     | original_query, conversation_history, final_answer, final_sources    |
+| Planner        | original_query, manifest_context, retry_notes (on retry only)        |
+| Router         | plan                                                                  |
+| Librarian      | assigned task only, manifest detail for assigned source only          |
+| Data Scientist | assigned task only, manifest detail for assigned table only           |
+| Synthesizer    | original_query, plan, task_results, sources_used                     |
+| Auditor        | original_query, plan, draft_answer, sources_used                     |
+
+---
+
+## Manifest — Two-Tier Structure
+
+### Tier 1: Manifest Index (Planner sees this)
+Lightweight. One-line summaries only. Low token cost.
+File: `data/manifest_index.yaml`
+
+### Tier 2: Manifest Detail (Workers see this — only their assigned source)
+Full schemas, column types, section lists, tags.
+File: `data/manifest_detail.yaml`
+
+---
+
+## LLM Configuration
+
+Every agent has its own config entry in `config.yaml`.
+Agents never instantiate their own LLM client — they receive one via dependency injection.
+Swapping a model = change one line in config. Agent code does not change.
+
+```yaml
+llm:
+  provider: openai
+  agents:
+    chat:           { model: gpt-4o, temperature: 0.3 }
+    planner:        { model: gpt-4o, temperature: 0.0 }
+    router:         { model: gpt-4o, temperature: 0.0 }
+    librarian:      { model: gpt-4o, temperature: 0.0 }
+    data_scientist: { model: gpt-4o, temperature: 0.0 }
+    synthesizer:    { model: gpt-4o, temperature: 0.1 }
+    auditor:        { model: gpt-4o, temperature: 0.0 }
+```
+
+---
+
+## Retry & Failure Logic
+
+```
+Auditor rejects:
+  retry_count += 1
+  audit_notes written to state
+
+  if retry_count < 3:
+    CorrectionEvent → Planner (with audit_notes)
+    Full cycle repeats
+
+  if retry_count == 3:
+    Return: "I could not verify an answer for your question."
+```
+
+---
+
+## Worker Registry Pattern
+
+```python
+WORKER_REGISTRY = {
+    "librarian":      LibrarianAgent,
+    "data_scientist": DataScientistAgent,
+    # Add new workers here — nothing else changes
+}
+```
+
+Adding a new data type = add one entry to registry + write the agent class.
+Planner only uses string names. Router handles instantiation. They never need to change.
+
+---
+
+## Memory
+
+- **v1:** In-memory per session. History lost when session closes.
+- **Future:** Persistent history (SQLite or Redis) — planned, not yet designed.
+- Session ID lives in state. Isolates concurrent users.
+
+---
+
+## Observability
+
+- LangSmith enabled from day one.
+- Every node execution is traced: input state, prompt sent, LLM response, output state.
+- Set `LANGSMITH_API_KEY` in `.env`. Enable in `config.yaml`.
+
+---
+
+## Build Order (Do Not Deviate)
+
+```
+1.  Project skeleton + requirements.txt + .gitignore
+2.  core/state.py
+3.  core/llm_config.py
+4.  core/manifest.py
+5.  core/registry.py
+6.  graph.py  (skeleton — empty nodes only)
+7.  agents/planner.py
+8.  agents/librarian.py
+9.  agents/data_scientist.py
+10. agents/router.py
+11. agents/synthesizer.py
+12. agents/auditor.py
+13. agents/chat.py
+14. graph.py  (wire all edges)
+15. api.py
+```
+
+---
+
+## Key Constraints — Claude Code Must Respect These
+
+- **Never** add fields to AgentState not listed above without explicit instruction.
+- **Never** let an agent access state fields outside its view table.
+- **Never** hardcode an LLM client inside an agent — always inject via llm_config.
+- **Never** hardcode ChromaDB inside the Librarian — use the RetrieverInterface.
+- **Never** build the API before the graph runs end-to-end.
+- **Always** write an isolated test function after each agent is built.
+- **Always** use `asyncio.gather` for parallel worker dispatch in the Router.
+- **State updates return only changed fields** — never return the full state from a node.
+
+---
+
+## Deferred Features (Do Not Implement in v1)
+
+- Reranking (FlashRank) — slot reserved, not active
+- GraphRAG — interface abstracted, backend not implemented
+- RAGAS evaluation — state fields logged, evaluation layer not built
+- Persistent conversation memory
+- User authentication
+- Streaming responses
+- Docker / deployment setup
+
+---
+
+## Environment Variables Required
+
+```
+OPENAI_API_KEY=
+LANGSMITH_API_KEY=
+LANGSMITH_PROJECT=multi-agent-rag
+```

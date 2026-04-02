@@ -1,0 +1,64 @@
+# ─────────────────────────────────────────────
+# Multi-Agent RAG System — Top-Level Config
+# ─────────────────────────────────────────────
+
+# LLM Configuration
+# To swap a model: change the value here. Agent code never changes.
+llm:
+  provider: openai
+  agents:
+    chat:
+      model: gpt-4o
+      temperature: 0.3
+    planner:
+      model: gpt-4o
+      temperature: 0.0
+    router:
+      model: gpt-4o
+      temperature: 0.0
+    librarian:
+      model: gpt-4o
+      temperature: 0.0
+    data_scientist:
+      model: gpt-4o
+      temperature: 0.0
+    synthesizer:
+      model: gpt-4o
+      temperature: 0.1
+    auditor:
+      model: gpt-4o
+      temperature: 0.0
+
+# Retry Logic
+retry:
+  max_attempts: 3
+  failure_message: "I could not verify an answer for your question."
+
+# Retrieval Settings
+retrieval:
+  initial_fetch: 20       # ChromaDB retrieves this many chunks
+  final_top_k: 5          # How many chunks reach the Synthesizer
+  reranker_enabled: false  # Set to true when FlashRank is added in v2
+
+# Data Paths
+paths:
+  pdfs:       data/pdfs/
+  tables:     data/tables/
+  chroma_db:  data/chroma_db/
+  manifest_index:  data/manifest_index.yaml
+  manifest_detail: data/manifest_detail.yaml
+
+# Observability
+langsmith:
+  enabled: true
+  project: multi-agent-rag
+
+# Session
+session:
+  memory: in_memory     # Options: in_memory | sqlite (future) | redis (future)
+
+# API
+api:
+  host: 0.0.0.0
+  port: 8000
+  reload: true          # Set to false in production

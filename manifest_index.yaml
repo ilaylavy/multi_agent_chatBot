@@ -1,0 +1,35 @@
+# ─────────────────────────────────────────────────────────────
+# Manifest Index — Planner View
+# ─────────────────────────────────────────────────────────────
+# This is what the Planner reads on EVERY query.
+# Keep entries SHORT. One-line summaries only.
+# Full schemas live in manifest_detail.yaml.
+# ─────────────────────────────────────────────────────────────
+
+pdfs:
+  - id: travel_policy_2024
+    name: Travel Policy 2024
+    summary: Flight class entitlements, hotel limits, and expense caps by employee clearance level.
+
+  - id: hr_handbook_v3
+    name: HR Handbook v3
+    summary: Onboarding procedures, leave policies, disciplinary process, and code of conduct.
+
+tables:
+  - id: employees
+    name: employees.csv
+    summary: Master employee list with names, departments, and clearance levels.
+
+  - id: salary_bands
+    name: salary_bands.sqlite
+    summary: Salary ranges per clearance level and department.
+
+# ─────────────────────────────────────────────────────────────
+# HOW TO ADD A NEW SOURCE
+# ─────────────────────────────────────────────────────────────
+# 1. Add entry here (id, name, summary — 1 line max).
+# 2. Add full detail entry in manifest_detail.yaml.
+# 3. For PDFs: ingest into ChromaDB using the ingestion script.
+# 4. For tables: place file in data/tables/.
+# No agent code changes required.
+# ─────────────────────────────────────────────────────────────

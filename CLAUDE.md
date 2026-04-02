@@ -1,0 +1,109 @@
+# Claude Code — Session Primer
+
+> Read this file and ARCHITECTURE.md before doing anything in this project.
+
+---
+
+## What You Are Building
+
+A 7-agent RAG system that answers natural language questions by querying
+PDFs and structured tables, verifying the answer, and returning it to the user.
+
+Full design is in ARCHITECTURE.md. Do not deviate from it.
+
+---
+
+## Non-Negotiable Rules
+
+1. **Read ARCHITECTURE.md first.** Always. Every session.
+2. **One file at a time.** Do not create files not explicitly requested.
+3. **Do not add fields to AgentState** beyond what is specified in ARCHITECTURE.md.
+4. **Agents never instantiate their own LLM.** Always inject via `core/llm_config.py`.
+5. **Agents never access state directly.** Always use the agent's view function.
+6. **Do not implement deferred features.** See the Deferred Features list in ARCHITECTURE.md.
+7. **After each agent: write an isolated test function** the user can run immediately.
+8. **State nodes return only changed fields** — never the full state object.
+9. **Router uses asyncio.gather** for parallel worker dispatch — never sequential loops.
+10. **Librarian uses RetrieverInterface** — never calls ChromaDB directly.
+
+---
+
+## Build Order
+
+Do not skip steps. Do not reorder.
+
+```
+1.  core/state.py
+2.  core/llm_config.py
+3.  core/manifest.py
+4.  core/registry.py
+5.  graph.py skeleton (empty nodes)
+6.  agents/planner.py
+7.  agents/librarian.py
+8.  agents/data_scientist.py
+9.  agents/router.py
+10. agents/synthesizer.py
+11. agents/auditor.py
+12. agents/chat.py
+13. graph.py (wire all edges)
+14. api.py
+```
+
+---
+
+## Before Writing Any Agent
+
+Check:
+- Does `core/state.py` exist and match ARCHITECTURE.md? If not, stop and fix it first.
+- Does `core/llm_config.py` exist? If not, stop and build it first.
+- Is the agent in the build order above? Build only the next one in sequence.
+
+---
+
+## How to Structure Each Agent
+
+Every agent file must follow this pattern:
+
+```python
+# 1. View function — filters state down to only what this agent needs
+def agent_name_view(state: AgentState) -> dict:
+    ...
+
+# 2. Node function — the LangGraph node
+async def agent_name_node(state: AgentState) -> dict:
+    view = agent_name_view(state)
+    llm = get_llm("agent_name")   # from core/llm_config.py
+    # ... agent logic ...
+    return { "only_the_fields_this_agent_changes": value }
+
+# 3. Isolated test function at the bottom
+def test_agent_name():
+    fake_state = { ... }  # minimal state needed for this agent
+    result = asyncio.run(agent_name_node(fake_state))
+    assert "expected_field" in result
+    print("PASS:", result)
+
+if __name__ == "__main__":
+    test_agent_name()
+```
+
+---
+
+## Current Status
+
+Track progress here. Update after each file is completed and tested.
+
+- [ ] core/state.py
+- [ ] core/llm_config.py
+- [ ] core/manifest.py
+- [ ] core/registry.py
+- [ ] graph.py (skeleton)
+- [ ] agents/planner.py
+- [ ] agents/librarian.py
+- [ ] agents/data_scientist.py
+- [ ] agents/router.py
+- [ ] agents/synthesizer.py
+- [ ] agents/auditor.py
+- [ ] agents/chat.py
+- [ ] graph.py (wired)
+- [ ] api.py
