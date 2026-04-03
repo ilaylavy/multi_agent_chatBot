@@ -89,6 +89,20 @@ if __name__ == "__main__":
 
 ---
 
+## Signature Patterns
+
+**LangGraph node** — used for all agents that are graph nodes (planner, router, synthesizer, auditor, chat, librarian, data_scientist):
+```python
+async def agent_name_node(state: AgentState) -> dict:
+```
+
+**Registry worker callable** — used for internal worker functions dispatched by the Router via `asyncio.gather`; each worker receives its specific task directly:
+```python
+async def worker_name(state: AgentState, task: Task) -> TaskResult:
+```
+
+---
+
 ## Current Status
 
 Track progress here. Update after each file is completed and tested.
