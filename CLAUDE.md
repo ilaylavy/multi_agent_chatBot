@@ -103,6 +103,23 @@ async def worker_name(state: AgentState, task: Task) -> TaskResult:
 
 ---
 
+## LLM Output Parsing
+
+All agents that need structured output from the LLM must:
+1. Prompt the LLM to respond in JSON matching a specific schema.
+2. Parse the response with `json.loads` inside a `try/except` that raises a `ValueError` including the raw LLM output in the message.
+
+Never use `with_structured_output`.
+
+```python
+try:
+    data = json.loads(response.content)
+except (json.JSONDecodeError, KeyError) as exc:
+    raise ValueError(f"Failed to parse LLM output: {exc}\nRaw output: {response.content}") from exc
+```
+
+---
+
 ## Current Status
 
 Track progress here. Update after each file is completed and tested.

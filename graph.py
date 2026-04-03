@@ -1,9 +1,12 @@
 """
 graph.py — LangGraph skeleton.
 
-All agent nodes are stubs returning empty dicts.
-Edges are fully wired. Real agent implementations are
-imported and swapped in when agents/ are built.
+5 graph nodes: chat, planner, router, synthesizer, auditor.
+Librarian and Data Scientist are NOT graph nodes — they are worker
+callables dispatched internally by router_node via asyncio.gather
+using the Worker Registry (core/registry.py).
+
+All nodes are stubs returning empty dicts until agents/ are built.
 """
 
 from __future__ import annotations
@@ -28,14 +31,7 @@ async def planner_node(state: AgentState) -> dict:
 
 
 async def router_node(state: AgentState) -> dict:
-    return {}
-
-
-async def librarian_node(state: AgentState) -> dict:
-    return {}
-
-
-async def data_scientist_node(state: AgentState) -> dict:
+    # Will call librarian/data_scientist workers internally via asyncio.gather
     return {}
 
 
@@ -55,9 +51,9 @@ def route_after_audit(
     state: AgentState,
 ) -> Literal["chat_node", "planner_node"]:
     """
-    PASS              → chat_node   (release to user)
-    FAIL + retries < 3 → planner_node (retry cycle)
-    FAIL + retries >= 3 → chat_node  (graceful failure)
+    PASS                → chat_node    (release to user)
+    FAIL + retries < 3  → planner_node (retry cycle)
+    FAIL + retries >= 3 → chat_node    (graceful failure)
     """
     audit: AuditResult = state["audit_result"]
     if audit["verdict"] == "PASS":
@@ -74,14 +70,12 @@ def route_after_audit(
 def build_graph() -> StateGraph:
     graph = StateGraph(AgentState)
 
-    # Register nodes
-    graph.add_node("chat_node",          chat_node)
-    graph.add_node("planner_node",       planner_node)
-    graph.add_node("router_node",        router_node)
-    graph.add_node("librarian_node",     librarian_node)
-    graph.add_node("data_scientist_node", data_scientist_node)
-    graph.add_node("synthesizer_node",   synthesizer_node)
-    graph.add_node("auditor_node",       auditor_node)
+    # 5 graph nodes — librarian and data_scientist are registry workers, not nodes
+    graph.add_node("chat_node",        chat_node)
+    graph.add_node("planner_node",     planner_node)
+    graph.add_node("router_node",      router_node)
+    graph.add_node("synthesizer_node", synthesizer_node)
+    graph.add_node("auditor_node",     auditor_node)
 
     # Linear edges
     graph.add_edge(START,              "chat_node")
@@ -128,15 +122,18 @@ def test_graph():
         "chat_node",
         "planner_node",
         "router_node",
-        "librarian_node",
-        "data_scientist_node",
         "synthesizer_node",
         "auditor_node",
     }
     assert expected_nodes.issubset(set(str(n) for n in compiled_graph.nodes)), \
         "One or more expected nodes are missing"
 
-    print("\nPASS: all 7 agent nodes present in compiled graph")
+    absent = {"librarian_node", "data_scientist_node"}
+    actual = set(str(n) for n in compiled_graph.nodes)
+    for name in absent:
+        assert name not in actual, f"{name} should not be a graph node"
+
+    print("\nPASS: 5 graph nodes present, librarian/data_scientist correctly absent")
 
 
 if __name__ == "__main__":
