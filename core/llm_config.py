@@ -30,7 +30,12 @@ load_dotenv(_PROJECT_ROOT / ".env")
 
 @lru_cache(maxsize=1)
 def _load_config() -> dict:
-    """Load and cache config.yaml from the project root."""
+    """Load and cache config.yaml from the project root.
+
+    Cached for the lifetime of the process — intentional.
+    config.yaml is not expected to change at runtime.
+    To pick up edits to config.yaml, restart the server.
+    """
     config_path = _PROJECT_ROOT / "config.yaml"
     with open(config_path, "r") as f:
         return yaml.safe_load(f)

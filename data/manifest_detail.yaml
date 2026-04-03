@@ -1,0 +1,111 @@
+# ─────────────────────────────────────────────────────────────
+# Manifest Detail — Worker View
+# ─────────────────────────────────────────────────────────────
+# Workers (Librarian, Data Scientist) read ONLY the entry
+# for their assigned source_id. They never see the full file.
+# ─────────────────────────────────────────────────────────────
+
+pdfs:
+
+  - id: travel_policy_2024
+    filename: travel_policy.pdf
+    pages: 18
+    sections:
+      - "Section 1: Flight Class Entitlements by Clearance Level"
+      - "Section 2: Hotel Nightly Allowances"
+      - "Section 3: Per Diem Meal Rates"
+      - "Section 4: Ground Transportation Rules"
+      - "Section 5: Receipt and Reimbursement Process"
+    tags:
+      - travel
+      - expenses
+      - flight
+      - hotel
+      - clearance
+      - reimbursement
+    notes: "Tables inside this PDF contain clearance-to-entitlement mappings. pymupdf4llm handles these."
+
+  - id: hr_handbook_v3
+    filename: hr_handbook_v3.pdf
+    pages: 64
+    sections:
+      - "Section 1: Onboarding Checklist"
+      - "Section 2: Leave Policies (Annual, Sick, Parental)"
+      - "Section 3: Performance Review Process"
+      - "Section 4: Disciplinary Procedures"
+      - "Section 5: Code of Conduct"
+      - "Section 6: Benefits Overview"
+    tags:
+      - hr
+      - onboarding
+      - leave
+      - benefits
+      - conduct
+      - performance
+
+tables:
+
+  - id: employees
+    filename: employees.csv
+    type: csv
+    row_count_approx: 250
+    columns:
+      - name: employee_id
+        type: integer
+        description: Unique employee identifier
+      - name: full_name
+        type: string
+        description: Employee full name
+      - name: email
+        type: string
+        description: Work email address
+      - name: department
+        type: string
+        description: Department name
+        sample_values: ["Engineering", "Finance", "HR", "Sales"]
+      - name: clearance_level
+        type: string
+        description: Employee clearance level (A = highest, D = lowest)
+        sample_values: ["A", "B", "C", "D"]
+      - name: hire_date
+        type: date
+        description: Date employee joined (YYYY-MM-DD)
+      - name: manager_id
+        type: integer
+        description: employee_id of direct manager (nullable)
+    relationships:
+      - "clearance_level links to salary_bands.clearance_level"
+
+  - id: salary_bands
+    filename: salary_bands.sqlite
+    type: sqlite
+    table_name: salary_bands
+    row_count_approx: 40
+    columns:
+      - name: id
+        type: integer
+        description: Primary key
+      - name: clearance_level
+        type: string
+        description: Clearance level (A/B/C/D)
+      - name: department
+        type: string
+        description: Department name
+      - name: salary_min
+        type: integer
+        description: Minimum annual salary in USD
+      - name: salary_max
+        type: integer
+        description: Maximum annual salary in USD
+      - name: currency
+        type: string
+        description: Always USD in this dataset
+    relationships:
+      - "clearance_level links to employees.clearance_level"
+
+# ─────────────────────────────────────────────────────────────
+# HOW TO ADD A NEW SOURCE
+# ─────────────────────────────────────────────────────────────
+# Add the full entry here matching the schema above.
+# Mirror a short entry in manifest_index.yaml.
+# ─────────────────────────────────────────────────────────────
