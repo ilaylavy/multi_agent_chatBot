@@ -129,7 +129,7 @@ async def chat_node(state: AgentState) -> dict:
     view = chat_view(state)
 
     final_answer = view["final_answer"]
-    retry_count  = state["retry_count"]
+    retry_count  = state["retry_count"]  # control logic only — not passed to LLM prompt, intentional view exception
 
     # ── Path 1: RETRY EXHAUSTION ──────────────────────────────────
     if not final_answer and retry_count >= _MAX_ATTEMPTS:

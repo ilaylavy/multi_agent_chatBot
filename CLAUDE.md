@@ -124,17 +124,18 @@ except (json.JSONDecodeError, KeyError) as exc:
 
 Track progress here. Update after each file is completed and tested.
 
-- [ ] core/state.py
-- [ ] core/llm_config.py
-- [ ] core/manifest.py
-- [ ] core/registry.py
-- [ ] graph.py (skeleton)
-- [ ] agents/planner.py
-- [ ] agents/librarian.py
-- [ ] agents/data_scientist.py
-- [ ] agents/router.py
-- [ ] agents/synthesizer.py
-- [ ] agents/auditor.py
-- [ ] agents/chat.py
-- [ ] graph.py (wired)
-- [ ] api.py
+- [x] core/state.py
+- [x] core/llm_config.py
+- [x] core/manifest.py
+- [x] core/registry.py
+- [x] core/parse.py
+- [x] graph.py (skeleton)
+- [x] agents/planner.py
+- [x] agents/librarian.py
+- [x] agents/data_scientist.py
+- [x] agents/router.py
+- [x] agents/synthesizer.py
+- [x] agents/auditor.py
+- [x] agents/chat.py
+- [x] graph.py (wired)
+- [x] api.py

@@ -17,6 +17,7 @@ import asyncio
 import json
 
 from core.llm_config import get_llm
+from core.parse import parse_llm_json
 from core.state import AgentState, AuditResult
 
 
@@ -32,8 +33,11 @@ a user.
 Check all three of the following:
 
   1. COMPLETENESS — every task in the plan is addressed in the draft answer.
-  2. TRACEABILITY — every factual claim in the draft answer is traceable to a
-     source listed in sources_used. Claims without a cited source fail this check.
+  2. TRACEABILITY — every factual claim in the draft answer is consistent with and
+     derivable from the sources listed in sources_used. You are verifying factual
+     accuracy, not citation formatting. A claim passes this check if it is supported
+     by the available source data, regardless of whether the source name appears
+     inline in the text.
   3. NO UNSUPPORTED ASSERTIONS — the draft does not assert anything that cannot
      be derived from the provided sources. Speculation or inference beyond the
      evidence fails this check.
@@ -133,20 +137,20 @@ async def auditor_node(state: AgentState) -> dict:
         {"role": "user",   "content": user_message},
     ])
 
+    data = parse_llm_json(response.content)
     try:
-        data    = json.loads(response.content)
         verdict = data["verdict"]
         notes   = data.get("notes", "")
-    except (json.JSONDecodeError, KeyError) as exc:
+    except KeyError as exc:
         raise ValueError(
-            f"Failed to parse LLM output: {exc}\nRaw output: {response.content}"
+            f"Missing key in LLM output: {exc}\nRaw output: {response.content}"
         ) from exc
 
     if verdict == "PASS":
         return {
             "audit_result":  AuditResult(verdict="PASS", notes=""),
-            "final_answer":  state["draft_answer"],
-            "final_sources": state["sources_used"],
+            "final_answer":  view["draft_answer"],
+            "final_sources": view["sources_used"],
         }
 
     # FAIL — increment retry_count and write notes for the Planner
@@ -154,7 +158,7 @@ async def auditor_node(state: AgentState) -> dict:
     # not here. The Auditor only writes state.
     return {
         "audit_result": AuditResult(verdict="FAIL", notes=notes),
-        "retry_count":  state["retry_count"] + 1,
+        "retry_count":  state["retry_count"] + 1,  # control logic only — not passed to LLM prompt, intentional view exception
         "retry_notes":  notes,
     }
 

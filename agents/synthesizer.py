@@ -16,6 +16,7 @@ import asyncio
 import json
 
 from core.llm_config import get_llm
+from core.parse import parse_llm_json
 from core.state import AgentState, SourceRef
 
 
@@ -34,7 +35,9 @@ Rules (strictly enforced):
   - If some tasks failed, acknowledge what is missing and answer only from
     what is available.
   - Write in clear, direct prose suitable for a business user.
-  - Cite the source for any specific fact (e.g. "per the Travel Policy 2024").
+  - Every specific fact MUST include an explicit inline source citation
+    (e.g. "per the employees table, ..." or "according to the Travel Policy 2024, ...").
+    An answer without inline citations will be rejected by the auditor.
 
 Respond with ONLY a JSON object matching this schema — no explanation, no markdown:
 {
@@ -160,12 +163,12 @@ async def synthesizer_node(state: AgentState) -> dict:
         {"role": "user",   "content": user_message},
     ])
 
+    data = parse_llm_json(response.content)
     try:
-        data         = json.loads(response.content)
         draft_answer = data["draft_answer"]
-    except (json.JSONDecodeError, KeyError) as exc:
+    except KeyError as exc:
         raise ValueError(
-            f"Failed to parse LLM output: {exc}\nRaw output: {response.content}"
+            f"Missing key in LLM output: {exc}\nRaw output: {response.content}"
         ) from exc
 
     return {

@@ -50,7 +50,8 @@ project/
 │   ├── state.py             # Shared Pydantic TypedDict + Agent Views
 │   ├── llm_config.py        # Per-agent LLM loader
 │   ├── manifest.py          # Manifest loader and validator
-│   └── registry.py          # Worker Registry
+│   ├── registry.py          # Worker Registry
+│   └── parse.py             # Shared LLM output parsing (parse_llm_json)
 ├── data/
 │   ├── pdfs/                # Source PDF files go here
 │   ├── tables/              # CSV and SQLite files go here
@@ -123,6 +124,9 @@ project/
 - **PASS:** Releases to Chat Agent
 - **FAIL:** Writes rejection notes, increments retry_count, loops to Planner
 - **Max retries:** 3 — after that, return graceful failure to user
+- **Traceability check:** verifies every claim is factually consistent with and
+  derivable from `sources_used`. Does NOT require inline citation text in the
+  draft — citation formatting is the Chat Agent's responsibility.
 
 ---
 
@@ -211,6 +215,19 @@ llm:
     synthesizer:    { model: gpt-4o, temperature: 0.1 }
     auditor:        { model: gpt-4o, temperature: 0.0 }
 ```
+
+---
+
+## Utilities
+
+### `core/parse.py` — `parse_llm_json(raw: str) -> dict`
+
+All agents that expect structured JSON from the LLM call this function instead
+of `json.loads` directly. It strips optional markdown code fences
+(` ```json … ``` ` or ` ``` … ``` `) before parsing, then raises `ValueError`
+with the raw LLM output included if parsing still fails. Centralising this
+logic means no agent duplicates the stripping logic and every agent benefits
+automatically when the LLM changes its response formatting.
 
 ---
 

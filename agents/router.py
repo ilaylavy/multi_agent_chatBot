@@ -22,7 +22,7 @@ from typing import Any
 
 from core.manifest import _load_detail_raw, _load_index_raw
 from core.registry import get_worker
-from core.state import AgentState, SourceRef, Task, TaskResult
+from core.state import AgentState, SourceRef, Task, TaskResult, router_view
 
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,8 @@ async def router_node(state: AgentState) -> dict:
 
     Returns only the changed fields: task_results and sources_used.
     """
-    plan: list[Task] = state["plan"]
+    view = router_view(state)
+    plan: list[Task] = view["plan"]
 
     # Parallel dispatch — asyncio.gather, never a sequential loop
     results: list[Any] = await asyncio.gather(

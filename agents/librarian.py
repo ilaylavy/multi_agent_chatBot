@@ -19,6 +19,7 @@ from typing import List
 
 from core.llm_config import _load_config, get_llm
 from core.manifest import get_manifest_detail
+from core.parse import parse_llm_json
 from core.retriever import ChromaRetriever, RetrieverInterface
 from core.state import AgentState, Chunk, Task, TaskResult
 
@@ -36,7 +37,7 @@ _default_retriever = ChromaRetriever()
 # Prompt templates
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = """\
+_SYSTEM_PROMPT = f"""\
 You are a document retrieval specialist. You have been given a task and a set of
 text chunks retrieved from a PDF document. Your job is to identify which chunks
 are genuinely relevant to the task and return them.
@@ -44,20 +45,20 @@ are genuinely relevant to the task and return them.
 Rules:
   - Only return chunks that directly help answer the task description.
   - Do not alter chunk_text — copy it exactly as provided.
-  - Return between 1 and 5 chunks. If none are relevant, return an empty list.
+  - Return between 1 and {_FINAL_TOP_K} chunks. If none are relevant, return an empty list.
   - Preserve the source_pdf and page_number from the input.
 
 Respond with ONLY a JSON object matching this schema — no explanation, no markdown:
-{
+{{
   "selected_chunks": [
-    {
+    {{
       "chunk_text":      "exact text of the chunk",
       "source_pdf":      "filename as provided",
       "page_number":     3,
       "relevance_score": 0.95
-    }
+    }}
   ]
-}
+}}
 """
 
 _USER_TEMPLATE = """\
@@ -149,8 +150,8 @@ async def librarian_worker(
     ])
 
     # ── Parse LLM response — per CLAUDE.md LLM Output Parsing rule ──
+    data = parse_llm_json(response.content)
     try:
-        data = json.loads(response.content)
         selected: List[Chunk] = [
             Chunk(
                 chunk_text=c["chunk_text"],
@@ -160,9 +161,9 @@ async def librarian_worker(
             )
             for c in data["selected_chunks"]
         ]
-    except (json.JSONDecodeError, KeyError) as exc:
+    except KeyError as exc:
         raise ValueError(
-            f"Failed to parse LLM output: {exc}\nRaw output: {response.content}"
+            f"Missing key in LLM output: {exc}\nRaw output: {response.content}"
         ) from exc
 
     return TaskResult(

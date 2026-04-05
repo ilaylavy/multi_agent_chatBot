@@ -26,6 +26,7 @@ import pandas as pd
 
 from core.llm_config import _load_config, get_llm
 from core.manifest import _load_detail_raw, get_manifest_detail
+from core.parse import parse_llm_json
 from core.state import AgentState, Task, TaskResult
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -201,13 +202,13 @@ async def data_scientist_worker(
     ])
 
     # ── Parse LLM response — per CLAUDE.md LLM Output Parsing rule ──
+    data = parse_llm_json(response.content)
     try:
-        data       = json.loads(response.content)
         query_type = data["query_type"]
         query      = data["query"]
-    except (json.JSONDecodeError, KeyError) as exc:
+    except KeyError as exc:
         raise ValueError(
-            f"Failed to parse LLM output: {exc}\nRaw output: {response.content}"
+            f"Missing key in LLM output: {exc}\nRaw output: {response.content}"
         ) from exc
 
     # ── Sandboxed execution ───────────────────────────────────────
@@ -279,6 +280,9 @@ def test_data_scientist():
     }
 
     # ── Create a real fixture CSV in data/tables/ ─────────────────
+    # When run under pytest the session-scoped fixture in conftest.py
+    # creates this file before any test runs. When run standalone
+    # (python -m agents.data_scientist) we create it here and clean up.
     tables_dir = _tables_dir()
     tables_dir.mkdir(parents=True, exist_ok=True)
     fixture_csv = tables_dir / "employees.csv"
@@ -289,7 +293,9 @@ def test_data_scientist():
         "2,Dan Cohen,dan@corp.com,Finance,B,2019-06-01,1\n"
         "3,Yael Ben,yael@corp.com,HR,A,2021-03-20,1\n"
     )
-    fixture_csv.write_text(csv_content)
+    _created_fixture = not fixture_csv.exists()
+    if _created_fixture:
+        fixture_csv.write_text(csv_content)
 
     patch_target = f"{__name__}.get_llm"
 
@@ -329,10 +335,11 @@ def test_data_scientist():
         print(f"PASS: pandas query returned {output['row_count']} rows: {names}")
 
         # ── Test 3: missing table file returns success=False ───────
-        bad_task: Task = {**fake_task, "source_id": "salary_bands"}
+        # Use a filename guaranteed not to exist regardless of test data state
+        bad_task: Task = {**fake_task, "source_id": "ghost_table"}
         mock_raw_entry = {
-            "id": "salary_bands", "filename": "salary_bands.sqlite",
-            "type": "sqlite", "table_name": "salary_bands",
+            "id": "ghost_table", "filename": "ghost_table_does_not_exist.csv",
+            "type": "csv", "table_name": "ghost_table_does_not_exist",
         }
         with patch(patch_target, return_value=mock_llm), \
              patch(f"{__name__}._get_raw_entry", return_value=mock_raw_entry), \
@@ -375,8 +382,9 @@ def test_data_scientist():
         print("PASS: bad query execution is sandboxed — returns success=False, no crash")
 
     finally:
-        # Clean up the fixture CSV
-        if fixture_csv.exists():
+        # Only remove the file if this function created it (standalone run).
+        # Under pytest the conftest session fixture owns the lifecycle.
+        if _created_fixture and fixture_csv.exists():
             fixture_csv.unlink()
 
     print("\nPASS: all data_scientist tests passed")

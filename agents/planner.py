@@ -14,6 +14,7 @@ import asyncio
 import json
 
 from core.llm_config import get_llm
+from core.parse import parse_llm_json
 from core.state import AgentState, Task
 
 
@@ -110,8 +111,8 @@ async def planner_node(state: AgentState) -> dict:
         {"role": "user",   "content": user_message},
     ])
 
+    data = parse_llm_json(response.content)
     try:
-        data = json.loads(response.content)
         tasks: list[Task] = [
             Task(
                 task_id=t["task_id"],
@@ -121,9 +122,9 @@ async def planner_node(state: AgentState) -> dict:
             )
             for t in data["tasks"]
         ]
-    except (json.JSONDecodeError, KeyError) as exc:
+    except KeyError as exc:
         raise ValueError(
-            f"Failed to parse LLM output: {exc}\nRaw output: {response.content}"
+            f"Missing key in LLM output: {exc}\nRaw output: {response.content}"
         ) from exc
 
     return {"plan": tasks}
