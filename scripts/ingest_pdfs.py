@@ -1,7 +1,11 @@
 """
-scripts/ingest_pdfs.py — Ingest all PDFs in data/pdfs/ into ChromaDB.
+scripts/ingest_pdfs.py — Ingest all PDFs into ChromaDB.
 
-For each PDF:
+Scans two directories in order:
+  1. tests/fixtures/pdfs/  — committed test fixture PDFs (always present in git)
+  2. data/pdfs/            — real user-supplied PDFs (gitignored, optional)
+
+For each PDF found (deduped by filename, fixtures take precedence):
   1. Parse with pymupdf4llm (handles tables and complex layouts)
   2. Chunk text into ~500-char segments with 50-char overlap
   3. Upsert chunks into a ChromaDB collection named after the PDF stem
@@ -21,9 +25,10 @@ from pathlib import Path
 import chromadb
 import pymupdf4llm
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-PDFS_DIR     = PROJECT_ROOT / "data" / "pdfs"
-CHROMA_DIR   = PROJECT_ROOT / "data" / "chroma_db"
+PROJECT_ROOT      = Path(__file__).resolve().parent.parent
+FIXTURE_PDFS_DIR  = PROJECT_ROOT / "tests" / "fixtures" / "pdfs"
+PDFS_DIR          = PROJECT_ROOT / "data" / "pdfs"
+CHROMA_DIR        = PROJECT_ROOT / "data" / "chroma_db"
 
 CHUNK_SIZE    = 500   # target characters per chunk
 CHUNK_OVERLAP = 50    # overlap between consecutive chunks
@@ -110,14 +115,24 @@ def ingest_pdf(pdf_path: Path, client: chromadb.PersistentClient) -> int:
 
 
 def run_ingestion() -> None:
-    pdf_files = sorted(PDFS_DIR.glob("*.pdf"))
+    # Collect PDFs from both directories; fixtures take precedence (inserted first).
+    # A dict keyed by stem deduplicates: if the same filename exists in both dirs,
+    # the fixture version wins.
+    seen: dict[str, Path] = {}
+    for source_dir in (FIXTURE_PDFS_DIR, PDFS_DIR):
+        if source_dir.exists():
+            for p in sorted(source_dir.glob("*.pdf")):
+                seen.setdefault(p.stem, p)   # fixture inserted first, real-data skipped if duplicate
+
+    pdf_files = list(seen.values())
     if not pdf_files:
-        print(f"No PDF files found in {PDFS_DIR}")
+        print(f"No PDF files found in {FIXTURE_PDFS_DIR} or {PDFS_DIR}")
         return
 
     client = chromadb.PersistentClient(path=str(CHROMA_DIR))
     print(f"ChromaDB path : {CHROMA_DIR}")
-    print(f"PDFs found    : {len(pdf_files)}\n")
+    print(f"PDFs found    : {len(pdf_files)}  "
+          f"(fixtures: {FIXTURE_PDFS_DIR}, real data: {PDFS_DIR})\n")
 
     total_chunks = 0
     for pdf_path in pdf_files:

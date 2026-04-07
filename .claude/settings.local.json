@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m pytest tests/ -v --co)",
+      "Bash(python -m pytest tests/test_mock_suite.py -v)",
+      "Bash(rm data/pdfs/travel_policy_2024.pdf)",
+      "Bash(rm data/pdfs/bad.pdf)",
+      "Bash(mv env.example .env.example)",
+      "Bash(rm -f __pycache__/fixtures.cpython-312.pyc)",
+      "Bash(python -m pytest tests/ -v)"
+    ]
+  }
+}

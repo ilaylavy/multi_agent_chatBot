@@ -2,9 +2,12 @@
 scripts/create_test_data.py — Generate realistic test data for the RAG system.
 
 Creates:
-  data/tables/employees.csv          — 10 employees, including Noa Levi (clearance A)
-  data/tables/salary_bands.sqlite    — salary_bands table, 4 levels x 3 departments
-  data/pdfs/travel_policy_2024.pdf   — 2-page PDF with flight and hotel policy text
+  data/tables/employees.csv                        — 10 employees, including Noa Levi (clearance A)
+  data/tables/salary_bands.sqlite                  — salary_bands table, 4 levels x 3 departments
+  tests/fixtures/pdfs/travel_policy_2024.pdf       — 2-page PDF with flight and hotel policy text
+
+The PDF is written to tests/fixtures/pdfs/ so it is committed to git as a test fixture.
+Real (user-supplied) PDFs go in data/pdfs/, which is gitignored.
 
 Run with: python -m scripts.create_test_data
 """
@@ -15,12 +18,12 @@ import csv
 import sqlite3
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-TABLES_DIR   = PROJECT_ROOT / "data" / "tables"
-PDFS_DIR     = PROJECT_ROOT / "data" / "pdfs"
+PROJECT_ROOT      = Path(__file__).resolve().parent.parent
+TABLES_DIR        = PROJECT_ROOT / "data" / "tables"
+FIXTURE_PDFS_DIR  = PROJECT_ROOT / "tests" / "fixtures" / "pdfs"
 
 TABLES_DIR.mkdir(parents=True, exist_ok=True)
-PDFS_DIR.mkdir(parents=True, exist_ok=True)
+FIXTURE_PDFS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +122,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
 
-PDF_PATH = PDFS_DIR / "travel_policy_2024.pdf"
+PDF_PATH = FIXTURE_PDFS_DIR / "travel_policy_2024.pdf"
 
 styles    = getSampleStyleSheet()
 heading   = styles["Heading1"]
@@ -251,6 +254,7 @@ def _build_pdf(path: Path, page1: list, page2: list) -> None:
 _build_pdf(PDF_PATH, PAGE_1_CONTENT, PAGE_2_CONTENT)
 
 print(f"\nCreated {PDF_PATH}")
+print(f"  Location: tests/fixtures/pdfs/ (committed to git as a test fixture)")
 print(f"  Pages  : 2")
 print(f"  Page 1 : Flight class entitlements (Section 1 + 2)")
 print(f"  Page 2 : Hotel allowances, per diem rates, reimbursement process (Sections 3-5)")

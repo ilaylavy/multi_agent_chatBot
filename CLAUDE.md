@@ -25,6 +25,7 @@ Full design is in ARCHITECTURE.md. Do not deviate from it.
 8. **State nodes return only changed fields** — never the full state object.
 9. **Router uses asyncio.gather** for parallel worker dispatch — never sequential loops.
 10. **Librarian uses RetrieverInterface** — never calls ChromaDB directly.
+11. **Test files must never write to `data/pdfs/`, `data/tables/`, or either manifest file directly** — use temp directories or `tests/fixtures/` paths only.
 
 ---
 
@@ -91,15 +92,17 @@ if __name__ == "__main__":
 
 ## Signature Patterns
 
-**LangGraph node** — used for all agents that are graph nodes (planner, router, synthesizer, auditor, chat, librarian, data_scientist):
+**LangGraph node** — used for all agents that are graph nodes (planner, router, synthesizer, auditor, chat, librarian, data_scientist). Receives state only:
 ```python
 async def agent_name_node(state: AgentState) -> dict:
 ```
 
-**Registry worker callable** — used for internal worker functions dispatched by the Router via `asyncio.gather`; each worker receives its specific task directly:
+**Registry worker callable** — used for internal worker functions dispatched by the Router via `asyncio.gather`. Receives both state and its specific task:
 ```python
 async def worker_name(state: AgentState, task: Task) -> TaskResult:
 ```
+
+Note: LangGraph nodes receive `(state)` only — LangGraph calls them with state. Worker callables receive `(state, task)` — the Router passes the task explicitly via `asyncio.gather`.
 
 ---
 
@@ -129,6 +132,7 @@ Track progress here. Update after each file is completed and tested.
 - [x] core/manifest.py
 - [x] core/registry.py
 - [x] core/parse.py
+- [x] core/retriever.py
 - [x] graph.py (skeleton)
 - [x] agents/planner.py
 - [x] agents/librarian.py
@@ -139,3 +143,9 @@ Track progress here. Update after each file is completed and tested.
 - [x] agents/chat.py
 - [x] graph.py (wired)
 - [x] api.py
+- [x] ingestion/__init__.py
+- [x] ingestion/manifest_writer.py
+- [x] ingestion/pdf_ingestor.py
+- [x] ingestion/table_ingestor.py
+- [x] scripts/create_test_data.py
+- [x] scripts/ingest_pdfs.py

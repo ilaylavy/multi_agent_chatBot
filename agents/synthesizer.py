@@ -182,12 +182,9 @@ async def synthesizer_node(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def test_synthesizer():
-    import sys
-    from pathlib import Path
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from fixtures import SYNTHESIZER_STATE
+    from tests.fixtures import SYNTHESIZER_STATE
 
     patch_target = f"{__name__}.get_llm"
 

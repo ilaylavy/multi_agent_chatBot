@@ -135,14 +135,10 @@ async def planner_node(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def test_planner():
-    import sys
     import os
-    from pathlib import Path
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    # Allow import of fixtures from project root
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from fixtures import PLANNER_STATE, PLANNER_RETRY_STATE
+    from tests.fixtures import PLANNER_STATE, PLANNER_RETRY_STATE
 
     # ── Fake LLM response ────────────────────────────────────────
     fake_llm_output = json.dumps({

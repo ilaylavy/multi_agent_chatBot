@@ -5,19 +5,38 @@ Two public functions:
   get_manifest_index()            → formatted string for the Planner prompt
   get_manifest_detail(source_id)  → formatted string for a Worker prompt
 
-Both cache their file reads for the lifetime of the process.
-To pick up edits to the YAML files, restart the server.
+Both cache their YAML reads in a module-level dict. Call
+invalidate_manifest_cache() to clear the cache and force the next read to
+reload from disk — useful after running an ingestion script that adds new
+sources without restarting the server.
 """
 
 from __future__ import annotations
 
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+# ---------------------------------------------------------------------------
+# Dict-based cache — keys: "index", "detail"
+# Replaced lru_cache so the cache can be explicitly cleared at runtime.
+# ---------------------------------------------------------------------------
+
+_cache: dict[str, Any] = {}
+
+
+def invalidate_manifest_cache() -> None:
+    """
+    Clear the manifest cache.
+
+    The next call to get_manifest_index() or get_manifest_detail() will
+    re-read the YAML files from disk. No-op if the cache is already empty.
+    """
+    _cache.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -31,28 +50,22 @@ def _config_paths() -> dict:
         return yaml.safe_load(f)["paths"]
 
 
-@lru_cache(maxsize=1)
 def _load_index_raw() -> dict:
-    """Parse and cache manifest_index.yaml.
-
-    Cached for the lifetime of the process — intentional.
-    To pick up edits to manifest_index.yaml, restart the server.
-    """
-    path = _PROJECT_ROOT / _config_paths()["manifest_index"]
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
+    """Return the parsed manifest_index.yaml, reading from disk on cache miss."""
+    if "index" not in _cache:
+        path = _PROJECT_ROOT / _config_paths()["manifest_index"]
+        with open(path, "r") as f:
+            _cache["index"] = yaml.safe_load(f)
+    return _cache["index"]
 
 
-@lru_cache(maxsize=1)
 def _load_detail_raw() -> dict:
-    """Parse and cache manifest_detail.yaml.
-
-    Cached for the lifetime of the process — intentional.
-    To pick up edits to manifest_detail.yaml, restart the server.
-    """
-    path = _PROJECT_ROOT / _config_paths()["manifest_detail"]
-    with open(path, "r") as f:
-        return yaml.safe_load(f)
+    """Return the parsed manifest_detail.yaml, reading from disk on cache miss."""
+    if "detail" not in _cache:
+        path = _PROJECT_ROOT / _config_paths()["manifest_detail"]
+        with open(path, "r") as f:
+            _cache["detail"] = yaml.safe_load(f)
+    return _cache["detail"]
 
 
 def _format_index(raw: dict) -> str:
@@ -148,6 +161,7 @@ def get_manifest_index() -> str:
 
     Ready to paste directly into a Planner prompt.
     Reads manifest_index.yaml (path from config.yaml) and caches the parse.
+    Call invalidate_manifest_cache() to force a re-read.
     """
     return _format_index(_load_index_raw())
 
@@ -233,6 +247,31 @@ def test_manifest():
         print(f"Correctly raised ValueError: {exc}")
         assert "fake_source_xyz" in str(exc)
         assert "Known IDs:" in str(exc)
+
+    # 5. Cache invalidation — confirm invalidate_manifest_cache() forces a re-read
+    print("\n\n=== invalidate_manifest_cache() — confirm re-read from disk ===\n")
+
+    # Start clean so the assertions below are deterministic
+    invalidate_manifest_cache()
+    assert _cache == {}, "Cache should be empty after invalidate_manifest_cache()"
+
+    # Populate the cache
+    get_manifest_index()
+    get_manifest_detail("employees")
+    assert "index"  in _cache, "Cache should contain 'index' after get_manifest_index()"
+    assert "detail" in _cache, "Cache should contain 'detail' after get_manifest_detail()"
+    print("PASS: cache populated after reads")
+
+    # Invalidate — cache must be empty immediately
+    invalidate_manifest_cache()
+    assert _cache == {}, "Cache should be empty immediately after invalidate_manifest_cache()"
+    print("PASS: cache empty after invalidate_manifest_cache()")
+
+    # Next read must re-populate from disk and return correct data
+    re_index = get_manifest_index()
+    assert "index" in _cache,               "Cache should be re-populated after next get_manifest_index()"
+    assert "travel_policy_2024" in re_index, "Re-read index must contain expected source"
+    print("PASS: next get_manifest_index() re-reads from disk and returns correct data")
 
     print("\nPASS: all manifest tests passed")
 

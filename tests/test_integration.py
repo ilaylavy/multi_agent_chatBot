@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+FIXTURE_PDF  = PROJECT_ROOT / "tests" / "fixtures" / "pdfs" / "travel_policy_2024.pdf"
 
 
 def pytest_configure(config):
@@ -67,6 +68,10 @@ def test_retrieval():
     Calls ChromaRetriever.search() directly against the ingested travel_policy_2024
     collection. Confirms chunks are returned and the top chunk is relevant.
     No LLM call — requires only that scripts/ingest_pdfs.py has been run.
+
+    Fixture PDF: tests/fixtures/pdfs/travel_policy_2024.pdf (committed to git).
+    Regenerate with: python -m scripts.create_test_data
+    Re-ingest with:  python -m scripts.ingest_pdfs
     """
     from core.retriever import ChromaRetriever
 
@@ -80,7 +85,9 @@ def test_retrieval():
     )
 
     assert len(chunks) >= 1, (
-        "Expected at least one chunk. Has scripts/ingest_pdfs.py been run?"
+        "Expected at least one chunk from travel_policy_2024. "
+        f"Fixture PDF path: {FIXTURE_PDF}. "
+        "Run: python -m scripts.create_test_data && python -m scripts.ingest_pdfs"
     )
 
     top_chunk = chunks[0]

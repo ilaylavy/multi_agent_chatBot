@@ -15,8 +15,8 @@ CHAT_AGENT_STATE: dict[str, Any] = {
     ],
     "final_answer": "Yes. Noa holds clearance level A, which entitles her to Business Class on flights over 4 hours.",
     "final_sources": [
-        {"type": "pdf", "id": "travel_policy_2024", "page": 3},
-        {"type": "table", "id": "employees", "row": "employee_id=42"}
+        {"source_id": "travel_policy_2024", "source_type": "pdf", "label": "Travel Policy 2024"},
+        {"source_id": "employees",           "source_type": "csv", "label": "Employees"},
     ],
     # Fields this agent should NOT see — present in state but must not reach prompt
     "plan": [],
@@ -69,8 +69,8 @@ AUDITOR_STATE_PASS: dict[str, Any] = {
     ],
     "draft_answer": "Noa holds clearance level A. According to Section 1 of the Travel Policy 2024, employees with clearance level A are entitled to Business Class on flights over 4 hours.",
     "sources_used": [
-        {"type": "table", "id": "employees"},
-        {"type": "pdf",   "id": "travel_policy_2024", "page": 3},
+        {"source_id": "employees",            "source_type": "csv", "label": "Employees"},
+        {"source_id": "travel_policy_2024",   "source_type": "pdf", "label": "Travel Policy 2024"},
     ],
     # Fields Auditor should NOT see
     "conversation_history": [],
@@ -109,8 +109,8 @@ SYNTHESIZER_STATE: dict[str, Any] = {
         },
     },
     "sources_used": [
-        {"type": "table", "id": "employees"},
-        {"type": "pdf", "id": "travel_policy_2024"},
+        {"source_id": "employees",           "source_type": "csv", "label": "Employees"},
+        {"source_id": "travel_policy_2024",  "source_type": "pdf", "label": "Travel Policy 2024"},
     ],
     # Empty — Synthesizer should not need these
     "conversation_history": [],

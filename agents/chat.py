@@ -93,16 +93,10 @@ def _format_sources_block(final_sources: list) -> str:
         return "  (none)"
     lines = []
     for src in final_sources:
-        src_id   = src.get("source_id") or src.get("id",   "unknown")
-        src_type = src.get("source_type") or src.get("type", "unknown")
-        label    = src.get("label", src_id)
-        extras   = []
-        if "page" in src:
-            extras.append(f"page {src['page']}")
-        if "row" in src:
-            extras.append(f"row {src['row']}")
-        suffix = f" ({', '.join(extras)})" if extras else ""
-        lines.append(f"  - {src_id} [{src_type}]{suffix} — {label}")
+        src_id   = src["source_id"]
+        src_type = src["source_type"]
+        label    = src["label"]
+        lines.append(f"  - {src_id} [{src_type}] — {label}")
     return "\n".join(lines)
 
 
@@ -183,12 +177,10 @@ async def chat_node(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def test_chat():
-    import sys
     from pathlib import Path as _Path
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    sys.path.insert(0, str(_PROJECT_ROOT))
-    from fixtures import CHAT_AGENT_STATE
+    from tests.fixtures import CHAT_AGENT_STATE
 
     patch_target = f"{__name__}.get_llm"
 

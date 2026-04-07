@@ -106,13 +106,10 @@ def _format_sources_block(sources_used: list) -> str:
         return "  (none)"
     lines = []
     for src in sources_used:
-        # Support both SourceRef schema (source_id/source_type/label)
-        # and the fixture schema (id/type) gracefully
-        src_id   = src.get("source_id") or src.get("id",   "unknown")
-        src_type = src.get("source_type") or src.get("type", "unknown")
-        label    = src.get("label", src_id)
-        page     = f" p.{src['page']}" if "page" in src else ""
-        lines.append(f"  - {src_id} ({src_type}){page} — {label}")
+        src_id   = src["source_id"]
+        src_type = src["source_type"]
+        label    = src["label"]
+        lines.append(f"  - {src_id} ({src_type}) — {label}")
     return "\n".join(lines)
 
 
@@ -168,12 +165,9 @@ async def auditor_node(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def test_auditor():
-    import sys
-    from pathlib import Path
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    from fixtures import AUDITOR_STATE_FAIL, AUDITOR_STATE_PASS
+    from tests.fixtures import AUDITOR_STATE_FAIL, AUDITOR_STATE_PASS
 
     patch_target = f"{__name__}.get_llm"
 
