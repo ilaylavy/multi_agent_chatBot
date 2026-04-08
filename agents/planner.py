@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 
 from core.llm_config import get_llm
 from core.parse import parse_llm_json
 from core.state import AgentState, Task
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

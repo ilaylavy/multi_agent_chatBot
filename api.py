@@ -16,6 +16,7 @@ Startup:
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import List
@@ -25,15 +26,21 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from core.llm_config import _load_config
-from core.manifest import _load_detail_raw, _load_index_raw, get_manifest_index
+from core.manifest import get_manifest_detail_raw, get_manifest_index, get_manifest_index_raw
 from core.retriever import ChromaRetriever
-from core.state import AgentState, SourceRef
+from core.state import AgentState, Message, SourceRef
 from graph import compiled_graph
 from ingestion.manifest_writer import delete_source_from_manifest
 from ingestion.pdf_ingestor import ingest_pdf
 from ingestion.table_ingestor import ingest_table
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +57,10 @@ if _cfg.get("langsmith", {}).get("enabled", False):
 # ---------------------------------------------------------------------------
 
 app = FastAPI()
+
+# Per-session conversation history — keyed by session_id.
+# Persists across requests within the same process lifetime.
+_sessions: dict[str, list[Message]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -126,8 +137,8 @@ async def ingest_table_endpoint(
 
 @app.get("/sources")
 def get_sources():
-    index_raw  = _load_index_raw()
-    detail_raw = _load_detail_raw()
+    index_raw  = get_manifest_index_raw()
+    detail_raw = get_manifest_detail_raw()
     index_entries = index_raw.get("pdfs", []) + index_raw.get("tables", [])
     return {"index": index_entries, "detail": detail_raw}
 
@@ -157,10 +168,12 @@ def health():
 
 @app.post("/chat", response_model=ChatResponse, responses={500: {"model": ErrorResponse}})
 async def chat(req: ChatRequest):
+    history: list[Message] = list(_sessions.get(req.session_id, []))
+
     initial_state: AgentState = {
         "original_query":       req.query,
         "session_id":           req.session_id,
-        "conversation_history": [],
+        "conversation_history": history,
         "plan":                 [],
         "manifest_context":     get_manifest_index(),
         "task_results":         {},
@@ -184,6 +197,8 @@ async def chat(req: ChatRequest):
             status_code=500,
             content=ErrorResponse(error=str(exc), session_id=req.session_id).model_dump(),
         )
+
+    _sessions[req.session_id] = list(final_state["conversation_history"])
 
     return ChatResponse(
         final_answer=final_state["final_answer"],
@@ -212,10 +227,10 @@ def test_api():
 
     # ── Test 2: POST /chat with mocked graph — correct shape ──────
     fake_final_state = {
-        "final_answer":  "Noa Levi has clearance level A.",
-        "final_sources": [{"source_id": "employees", "source_type": "csv", "label": "Employees CSV"}],
-        "session_id":    "test-session-001",
-        # (other fields omitted — API only reads final_answer and final_sources)
+        "final_answer":         "Noa Levi has clearance level A.",
+        "final_sources":        [{"source_id": "employees", "source_type": "csv", "label": "Employees CSV"}],
+        "session_id":           "test-session-001",
+        "conversation_history": [],
     }
 
     patch_target = f"{__name__}.compiled_graph"
@@ -314,8 +329,8 @@ def test_api():
     fake_detail_raw = {"pdfs": [{"id": "travel_policy_2024", "type": "pdf"}],
                        "tables": [{"id": "employees", "type": "csv"}]}
 
-    with patch(f"{__name__}._load_index_raw",  return_value=fake_index_raw), \
-         patch(f"{__name__}._load_detail_raw", return_value=fake_detail_raw):
+    with patch(f"{__name__}.get_manifest_index_raw",  return_value=fake_index_raw), \
+         patch(f"{__name__}.get_manifest_detail_raw", return_value=fake_detail_raw):
         resp = client.get("/sources")
 
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
@@ -455,8 +470,98 @@ def test_api():
         if _test_exc_dest.exists():
             _test_exc_dest.unlink()
 
+    # ── Test 15: same session_id — second call receives history from first ──
+    # The graph appends the turn to conversation_history; we simulate that by
+    # returning a final_state that includes an updated conversation_history.
+    patch_target = f"{__name__}.compiled_graph"
+
+    def make_fake_state(answer: str, history_after: list) -> dict:
+        return {
+            "final_answer":         answer,
+            "final_sources":        [],
+            "session_id":           "shared-session",
+            "conversation_history": history_after,
+        }
+
+    captured_states: list[AgentState] = []
+
+    async def recording_ainvoke(state, config=None):
+        captured_states.append(state)
+        turn_history = list(state["conversation_history"]) + [
+            {"role": "user",      "content": state["original_query"]},
+            {"role": "assistant", "content": "answer-" + str(len(captured_states))},
+        ]
+        return make_fake_state("answer-" + str(len(captured_states)), turn_history)
+
+    # Clear any leftover session state from earlier tests
+    _sessions.pop("shared-session", None)
+
+    with patch(patch_target) as mock_graph:
+        mock_graph.ainvoke = recording_ainvoke
+        resp1 = client.post("/chat", json={"query": "first question", "session_id": "shared-session"})
+        resp2 = client.post("/chat", json={"query": "second question", "session_id": "shared-session"})
+
+    assert resp1.status_code == 200
+    assert resp2.status_code == 200
+
+    # First call must have started with empty history
+    assert captured_states[0]["conversation_history"] == [], \
+        "First call must start with empty history"
+
+    # Second call must have received the two messages written after the first call
+    second_history = captured_states[1]["conversation_history"]
+    assert len(second_history) == 2, \
+        f"Second call must receive 2-message history from first call, got: {second_history}"
+    assert second_history[0] == {"role": "user",      "content": "first question"}
+    assert second_history[1] == {"role": "assistant", "content": "answer-1"}
+    print("PASS: same session_id — second call receives conversation history from first call")
+
+    # ── Test 16: different session_ids produce independent histories ───
+    captured_states.clear()
+    _sessions.pop("session-alpha", None)
+    _sessions.pop("session-beta",  None)
+
+    async def recording_ainvoke_isolated(state, config=None):
+        captured_states.append(state)
+        sid   = state["session_id"]
+        query = state["original_query"]
+        updated_history = list(state["conversation_history"]) + [
+            {"role": "user",      "content": query},
+            {"role": "assistant", "content": f"reply-{sid}"},
+        ]
+        return {
+            "final_answer":         f"reply-{sid}",
+            "final_sources":        [],
+            "session_id":           sid,
+            "conversation_history": updated_history,
+        }
+
+    with patch(patch_target) as mock_graph:
+        mock_graph.ainvoke = recording_ainvoke_isolated
+        # Alternate requests across two sessions
+        client.post("/chat", json={"query": "alpha-q1", "session_id": "session-alpha"})
+        client.post("/chat", json={"query": "beta-q1",  "session_id": "session-beta"})
+        client.post("/chat", json={"query": "alpha-q2", "session_id": "session-alpha"})
+
+    # Third call (alpha-q2) must only see alpha's history, not beta's
+    alpha_q2_state = captured_states[2]
+    assert alpha_q2_state["session_id"] == "session-alpha"
+    history_seen = alpha_q2_state["conversation_history"]
+    assert len(history_seen) == 2, \
+        f"session-alpha second call must see exactly 2 messages (its own first turn), got: {history_seen}"
+    assert all(msg["content"] != "beta-q1" for msg in history_seen), \
+        "session-alpha must never see session-beta messages"
+    print("PASS: different session_ids produce fully independent conversation histories")
+
     print("\nPASS: all api tests passed")
 
 
 if __name__ == "__main__":
-    test_api()
+    import uvicorn
+    _api_cfg = _load_config().get("api", {})
+    uvicorn.run(
+        "api:app",
+        host=_api_cfg.get("host", "0.0.0.0"),
+        port=_api_cfg.get("port", 8000),
+        reload=_api_cfg.get("reload", False),
+    )

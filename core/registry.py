@@ -10,10 +10,13 @@ Neither ever needs to change when a new worker is added.
 from __future__ import annotations
 
 import inspect
+import logging
 from typing import Callable
 
 from agents.librarian import librarian_worker
 from agents.data_scientist import data_scientist_worker
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

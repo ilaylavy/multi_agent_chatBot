@@ -8,6 +8,7 @@ RetrieverInterface and inject it into the Librarian — no agent code changes re
 
 from __future__ import annotations
 
+import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -16,6 +17,8 @@ from typing import List
 import chromadb
 
 from core.state import Chunk
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

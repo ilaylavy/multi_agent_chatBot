@@ -13,10 +13,13 @@ sources without restarting the server.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -154,6 +157,16 @@ def _format_table_detail(entry: dict[str, Any]) -> str:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
+def get_manifest_index_raw() -> dict:
+    """Return the parsed manifest_index.yaml as a plain dict."""
+    return _load_index_raw()
+
+
+def get_manifest_detail_raw() -> dict:
+    """Return the parsed manifest_detail.yaml as a plain dict."""
+    return _load_detail_raw()
+
 
 def get_manifest_index() -> str:
     """

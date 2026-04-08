@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -25,9 +26,11 @@ from typing import Any
 import pandas as pd
 
 from core.llm_config import _load_config, get_llm
-from core.manifest import _load_detail_raw, get_manifest_detail
+from core.manifest import get_manifest_detail, get_manifest_detail_raw
 from core.parse import parse_llm_json
 from core.state import AgentState, Task, TaskResult
+
+logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -46,7 +49,7 @@ def _get_raw_entry(source_id: str) -> dict:
     Return the raw manifest_detail.yaml entry for a given source_id.
     Used to extract filename and type without re-reading the YAML.
     """
-    raw = _load_detail_raw()
+    raw = get_manifest_detail_raw()
     for section in ("pdfs", "tables"):
         for entry in raw.get(section, []):
             if entry["id"] == source_id:

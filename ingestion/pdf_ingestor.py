@@ -22,6 +22,7 @@ Pipeline
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,8 @@ from core.llm_config import _load_config, get_llm
 from core.parse import parse_llm_json
 from core.retriever import ChromaRetriever
 from ingestion.manifest_writer import write_source_to_manifest
+
+logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 

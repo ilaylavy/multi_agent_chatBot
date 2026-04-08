@@ -25,10 +25,13 @@ Returns : { conversation_history } on initial entry
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 
 from core.llm_config import _load_config, get_llm
 from core.state import AgentState, Message
+
+logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 

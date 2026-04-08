@@ -8,8 +8,11 @@ is built from its view — never from the raw state.
 
 from __future__ import annotations
 
+import logging
 from typing import Dict, List, Literal, Optional
 from typing_extensions import TypedDict
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

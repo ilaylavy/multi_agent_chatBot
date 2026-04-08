@@ -30,6 +30,7 @@ Pipeline
 from __future__ import annotations
 
 import asyncio
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,8 @@ import pandas as pd
 from core.llm_config import get_llm
 from core.parse import parse_llm_json
 from ingestion.manifest_writer import write_source_to_manifest
+
+logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 

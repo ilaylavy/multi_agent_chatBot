@@ -18,11 +18,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any
 
-from core.manifest import _load_detail_raw, _load_index_raw
+from core.manifest import get_manifest_detail_raw, get_manifest_index_raw
 from core.registry import get_worker
 from core.state import AgentState, SourceRef, Task, TaskResult, router_view
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -36,8 +39,8 @@ def _build_source_ref(task: Task) -> SourceRef:
     tables → entry["type"]).  label comes from the manifest index name field.
     """
     source_id = task["source_id"]
-    raw_detail = _load_detail_raw()
-    raw_index  = _load_index_raw()
+    raw_detail = get_manifest_detail_raw()
+    raw_index  = get_manifest_index_raw()
 
     # Determine source_type from which section the source lives in
     source_type = "unknown"

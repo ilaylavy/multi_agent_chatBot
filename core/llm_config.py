@@ -8,6 +8,7 @@ Swapping a model = one line in config.yaml. Agent code never changes.
 
 from __future__ import annotations
 
+import logging
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -15,6 +16,8 @@ from pathlib import Path
 import yaml
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Bootstrap — load .env once at import time

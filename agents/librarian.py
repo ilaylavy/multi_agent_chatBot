@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import List
 
 from core.llm_config import _load_config, get_llm
@@ -22,6 +23,8 @@ from core.manifest import get_manifest_detail
 from core.parse import parse_llm_json
 from core.retriever import ChromaRetriever, RetrieverInterface
 from core.state import AgentState, Chunk, Task, TaskResult
+
+logger = logging.getLogger(__name__)
 
 # Read retrieval limits from config.yaml — change there, no agent code changes needed.
 # _load_config() is lru_cache'd so this does not re-read the file on every call.
