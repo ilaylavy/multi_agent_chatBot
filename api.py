@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import List
 
 from fastapi import FastAPI, File, Query, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from core.llm_config import _load_config
@@ -58,6 +59,15 @@ if _cfg.get("langsmith", {}).get("enabled", False):
 
 app = FastAPI()
 
+_FRONTEND_DIR = _PROJECT_ROOT / "frontend"
+app.mount("/static", StaticFiles(directory=_FRONTEND_DIR), name="static")
+
+
+@app.get("/")
+def index():
+    return FileResponse(_FRONTEND_DIR / "index.html")
+
+
 # Per-session conversation history — keyed by session_id.
 # Persists across requests within the same process lifetime.
 _sessions: dict[str, list[Message]] = {}
@@ -72,15 +82,36 @@ class ChatRequest(BaseModel):
     session_id: str
 
 
+class TraceInfo(BaseModel):
+    retry_count:    int
+    audit_verdict:  str
+    audit_notes:    str
+    plan:           List[dict]
+
+
 class ChatResponse(BaseModel):
     final_answer:  str
     final_sources: List[SourceRef]
     session_id:    str
+    trace:         TraceInfo
 
 
 class ErrorResponse(BaseModel):
     error:      str
     session_id: str = ""
+
+
+class SourceListItem(BaseModel):
+    source_id:    str
+    name:         str
+    type:         str            # "pdf" | "csv" | "sqlite"
+    summary:      str
+    # PDF-only
+    page_count:   int | None = None
+    tags:         List[str] | None = None
+    # Table-only
+    row_count:    int | None = None
+    column_count: int | None = None
 
 
 class IngestTableRequest(BaseModel):
@@ -135,12 +166,39 @@ async def ingest_table_endpoint(
     return result
 
 
-@app.get("/sources")
+@app.get("/sources", response_model=List[SourceListItem])
 def get_sources():
     index_raw  = get_manifest_index_raw()
     detail_raw = get_manifest_detail_raw()
-    index_entries = index_raw.get("pdfs", []) + index_raw.get("tables", [])
-    return {"index": index_entries, "detail": detail_raw}
+
+    pdf_detail   = {e["id"]: e for e in detail_raw.get("pdfs",   [])}
+    table_detail = {e["id"]: e for e in detail_raw.get("tables", [])}
+
+    sources: list[SourceListItem] = []
+
+    for entry in index_raw.get("pdfs", []):
+        detail = pdf_detail.get(entry["id"], {})
+        sources.append(SourceListItem(
+            source_id  = entry["id"],
+            name       = entry["name"],
+            type       = "pdf",
+            summary    = entry["summary"],
+            page_count = detail.get("pages"),
+            tags       = detail.get("tags", []),
+        ))
+
+    for entry in index_raw.get("tables", []):
+        detail = table_detail.get(entry["id"], {})
+        sources.append(SourceListItem(
+            source_id    = entry["id"],
+            name         = entry["name"],
+            type         = detail.get("type", "csv"),
+            summary      = entry["summary"],
+            row_count    = detail.get("row_count_approx"),
+            column_count = len(detail.get("columns", [])),
+        ))
+
+    return sources
 
 
 @app.delete("/sources/{source_id}")
@@ -200,10 +258,17 @@ async def chat(req: ChatRequest):
 
     _sessions[req.session_id] = list(final_state["conversation_history"])
 
+    audit = final_state.get("audit_result") or {"verdict": "", "notes": ""}
     return ChatResponse(
         final_answer=final_state["final_answer"],
         final_sources=final_state["final_sources"],
         session_id=req.session_id,
+        trace=TraceInfo(
+            retry_count=final_state.get("retry_count", 0),
+            audit_verdict=audit.get("verdict", ""),
+            audit_notes=audit.get("notes", ""),
+            plan=[dict(t) for t in final_state.get("plan", [])],
+        ),
     )
 
 
@@ -231,6 +296,10 @@ def test_api():
         "final_sources":        [{"source_id": "employees", "source_type": "csv", "label": "Employees CSV"}],
         "session_id":           "test-session-001",
         "conversation_history": [],
+        "retry_count":          0,
+        "audit_result":         {"verdict": "PASS", "notes": "All claims verified."},
+        "plan":                 [{"task_id": "t1", "worker_type": "data_scientist",
+                                  "description": "Look up clearance level", "source_id": "employees"}],
     }
 
     patch_target = f"{__name__}.compiled_graph"
@@ -249,6 +318,15 @@ def test_api():
     assert isinstance(body["final_sources"], list)
     assert len(body["final_sources"]) == 1
     assert body["final_sources"][0]["source_id"] == "employees"
+    assert "trace" in body, "Response must include trace field"
+    trace = body["trace"]
+    assert trace["retry_count"]   == 0
+    assert trace["audit_verdict"] == "PASS"
+    assert trace["audit_notes"]   == "All claims verified."
+    assert isinstance(trace["plan"], list) and len(trace["plan"]) == 1
+    assert trace["plan"][0]["task_id"]     == "t1"
+    assert trace["plan"][0]["worker_type"] == "data_scientist"
+    assert trace["plan"][0]["source_id"]   == "employees"
     print(f"PASS: POST /chat returns correct shape: {body['final_answer']}")
 
     # ── Test 3: POST /chat when graph raises → HTTP 500 ──────────
@@ -323,11 +401,17 @@ def test_api():
     assert body["session_id"] == ""
     print(f"PASS: POST /ingest/table ValueError returns 400 with consistent error shape")
 
-    # ── Test 7: GET /sources — returns both keys with content ─────
-    fake_index_raw  = {"pdfs": [{"id": "travel_policy_2024", "summary": "Travel rules."}],
-                       "tables": [{"id": "employees", "summary": "Employee list."}]}
-    fake_detail_raw = {"pdfs": [{"id": "travel_policy_2024", "type": "pdf"}],
-                       "tables": [{"id": "employees", "type": "csv"}]}
+    # ── Test 7: GET /sources — returns clean source list ─────────
+    fake_index_raw  = {
+        "pdfs":   [{"id": "travel_policy_2024", "name": "Travel Policy 2024", "summary": "Travel rules."}],
+        "tables": [{"id": "employees",          "name": "Employees",          "summary": "Employee list."}],
+    }
+    fake_detail_raw = {
+        "pdfs":   [{"id": "travel_policy_2024", "type": "pdf", "pages": 5,
+                    "tags": ["travel", "policy"]}],
+        "tables": [{"id": "employees", "type": "csv", "row_count_approx": 10,
+                    "columns": [{"name": "id"}, {"name": "full_name"}]}],
+    }
 
     with patch(f"{__name__}.get_manifest_index_raw",  return_value=fake_index_raw), \
          patch(f"{__name__}.get_manifest_detail_raw", return_value=fake_detail_raw):
@@ -335,11 +419,27 @@ def test_api():
 
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
     body = resp.json()
-    assert "index"  in body and "detail" in body, "Response must contain 'index' and 'detail' keys"
-    assert len(body["index"]) == 2, "index must be flat list combining pdfs + tables"
-    assert {e["id"] for e in body["index"]} == {"travel_policy_2024", "employees"}
-    assert "pdfs"   in body["detail"] and "tables" in body["detail"]
-    print(f"PASS: GET /sources returns both keys with {len(body['index'])} entries")
+    assert isinstance(body, list) and len(body) == 2, \
+        f"Response must be a list of 2 source objects, got: {body}"
+
+    pdf_src = next(s for s in body if s["source_id"] == "travel_policy_2024")
+    assert pdf_src["name"]       == "Travel Policy 2024"
+    assert pdf_src["type"]       == "pdf"
+    assert pdf_src["summary"]    == "Travel rules."
+    assert pdf_src["page_count"] == 5
+    assert pdf_src["tags"]       == ["travel", "policy"]
+    assert pdf_src["row_count"]    is None
+    assert pdf_src["column_count"] is None
+
+    tbl_src = next(s for s in body if s["source_id"] == "employees")
+    assert tbl_src["name"]         == "Employees"
+    assert tbl_src["type"]         == "csv"
+    assert tbl_src["summary"]      == "Employee list."
+    assert tbl_src["row_count"]    == 10
+    assert tbl_src["column_count"] == 2
+    assert tbl_src["page_count"] is None
+    assert tbl_src["tags"]       is None
+    print(f"PASS: GET /sources returns clean list of {len(body)} source objects")
 
     # ── Test 8: DELETE /sources/{source_id} — valid id ───────────
     mock_chroma_client = MagicMock()
@@ -481,6 +581,9 @@ def test_api():
             "final_sources":        [],
             "session_id":           "shared-session",
             "conversation_history": history_after,
+            "retry_count":          0,
+            "audit_result":         {"verdict": "PASS", "notes": ""},
+            "plan":                 [],
         }
 
     captured_states: list[AgentState] = []
@@ -503,6 +606,13 @@ def test_api():
 
     assert resp1.status_code == 200
     assert resp2.status_code == 200
+    for resp in (resp1, resp2):
+        assert "trace" in resp.json(), "Response must include trace field"
+        t = resp.json()["trace"]
+        assert "retry_count"   in t
+        assert "audit_verdict" in t
+        assert "audit_notes"   in t
+        assert isinstance(t["plan"], list)
 
     # First call must have started with empty history
     assert captured_states[0]["conversation_history"] == [], \
@@ -534,6 +644,9 @@ def test_api():
             "final_sources":        [],
             "session_id":           sid,
             "conversation_history": updated_history,
+            "retry_count":          0,
+            "audit_result":         {"verdict": "PASS", "notes": ""},
+            "plan":                 [],
         }
 
     with patch(patch_target) as mock_graph:
@@ -551,6 +664,15 @@ def test_api():
         f"session-alpha second call must see exactly 2 messages (its own first turn), got: {history_seen}"
     assert all(msg["content"] != "beta-q1" for msg in history_seen), \
         "session-alpha must never see session-beta messages"
+
+    # All three responses must include the trace field
+    with patch(patch_target) as mock_graph:
+        mock_graph.ainvoke = recording_ainvoke_isolated
+        trace_resp = client.post("/chat", json={"query": "trace-check", "session_id": "session-trace"})
+    assert "trace" in trace_resp.json(), "Response must include trace field"
+    t16 = trace_resp.json()["trace"]
+    assert "retry_count" in t16 and "audit_verdict" in t16 and "audit_notes" in t16
+    assert isinstance(t16["plan"], list)
     print("PASS: different session_ids produce fully independent conversation histories")
 
     print("\nPASS: all api tests passed")
