@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import List
 
 from fastapi import FastAPI, File, Query, UploadFile
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from core.llm_config import _load_config
@@ -68,7 +69,7 @@ class ChatResponse(BaseModel):
 
 class ErrorResponse(BaseModel):
     error:      str
-    session_id: str
+    session_id: str = ""
 
 
 class IngestTableRequest(BaseModel):
@@ -90,6 +91,9 @@ class IngestTableResponse(BaseModel):
 
 @app.post("/ingest/pdf", responses={400: {"model": ErrorResponse}})
 async def ingest_pdf_endpoint(file: UploadFile = File(...)):
+    if not file.filename.lower().endswith(".pdf"):
+        return JSONResponse(status_code=400, content=ErrorResponse(error="Only .pdf files are accepted").model_dump())
+
     source_id = Path(file.filename).stem
     dest = _PROJECT_ROOT / "data" / "pdfs" / file.filename
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -98,8 +102,11 @@ async def ingest_pdf_endpoint(file: UploadFile = File(...)):
     try:
         result = await ingest_pdf(dest, source_id)
     except ValueError as exc:
-        from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=400, content={"error": str(exc), "session_id": ""})
+        dest.unlink(missing_ok=True)
+        return JSONResponse(status_code=400, content=ErrorResponse(error=str(exc)).model_dump())
+    except Exception as exc:
+        dest.unlink(missing_ok=True)
+        return JSONResponse(status_code=500, content=ErrorResponse(error=str(exc)).model_dump())
     return result
 
 
@@ -113,8 +120,7 @@ async def ingest_table_endpoint(
     try:
         result = await ingest_table(_Path(req.file_path), req.source_id, table_name)
     except ValueError as exc:
-        from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=400, content={"error": str(exc), "session_id": ""})
+        return JSONResponse(status_code=400, content=ErrorResponse(error=str(exc)).model_dump())
     return result
 
 
@@ -128,12 +134,10 @@ def get_sources():
 
 @app.delete("/sources/{source_id}")
 def delete_source(source_id: str):
-    from fastapi.responses import JSONResponse
-
     try:
         delete_source_from_manifest(source_id)
     except ValueError as exc:
-        return JSONResponse(status_code=404, content={"error": str(exc)})
+        return JSONResponse(status_code=404, content=ErrorResponse(error=str(exc)).model_dump())
 
     # ChromaDB collection only exists for PDF sources; silently skip if absent
     chromadb_removed = False
@@ -176,10 +180,9 @@ async def chat(req: ChatRequest):
             config={"recursion_limit": 25},
         )
     except Exception as exc:  # noqa: BLE001
-        from fastapi.responses import JSONResponse
         return JSONResponse(
             status_code=500,
-            content={"error": str(exc), "session_id": req.session_id},
+            content=ErrorResponse(error=str(exc), session_id=req.session_id).model_dump(),
         )
 
     return ChatResponse(
@@ -299,8 +302,11 @@ def test_api():
             json={"file_path": "/data/tables/multi.sqlite", "source_id": "bad"},
         )
     assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
-    assert "multi-table error" in resp.json()["error"]
-    print(f"PASS: POST /ingest/table ValueError returns 400")
+    body = resp.json()
+    assert "multi-table error" in body["error"]
+    assert "session_id" in body, "Error response must always include session_id"
+    assert body["session_id"] == ""
+    print(f"PASS: POST /ingest/table ValueError returns 400 with consistent error shape")
 
     # ── Test 7: GET /sources — returns both keys with content ─────
     fake_index_raw  = {"pdfs": [{"id": "travel_policy_2024", "summary": "Travel rules."}],
@@ -343,8 +349,11 @@ def test_api():
         resp = client.delete("/sources/ghost")
 
     assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
-    assert "ghost" in resp.json()["error"]
-    print(f"PASS: DELETE /sources/ghost returns 404 for unknown source_id")
+    body = resp.json()
+    assert "ghost" in body["error"]
+    assert "session_id" in body, "Error response must always include session_id"
+    assert body["session_id"] == ""
+    print(f"PASS: DELETE /sources/ghost returns 404 with consistent error shape")
 
     # ── Test 10: DELETE /sources/{source_id} — ChromaDB absent ───
     # Table sources may have no ChromaDB collection; chromadb_collection_removed = False
@@ -392,7 +401,7 @@ def test_api():
         if _test_pdf_dest.exists():
             _test_pdf_dest.unlink()
 
-    # ── Test 12: POST /ingest/pdf — ValueError → HTTP 400 ────────
+    # ── Test 12: POST /ingest/pdf — ValueError → HTTP 400, file deleted ─
     _test_bad_name = "__api_test_bad__.pdf"
     _test_bad_dest = _PROJECT_ROOT / "data" / "pdfs" / _test_bad_name
     try:
@@ -402,11 +411,49 @@ def test_api():
                 files={"file": (_test_bad_name, b"not a pdf", "application/pdf")},
             )
         assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
-        assert "PDF parse failed" in resp.json()["error"]
-        print(f"PASS: POST /ingest/pdf ValueError returns 400")
+        body = resp.json()
+        assert "PDF parse failed" in body["error"]
+        assert "session_id" in body, "Error response must always include session_id"
+        assert body["session_id"] == ""
+        assert not _test_bad_dest.exists(), "File must be deleted after ingest failure"
+        print(f"PASS: POST /ingest/pdf ValueError returns 400 with consistent error shape and deletes uploaded file")
     finally:
         if _test_bad_dest.exists():
             _test_bad_dest.unlink()
+
+    # ── Test 13: POST /ingest/pdf — non-.pdf extension → HTTP 400 ────
+    resp = client.post(
+        "/ingest/pdf",
+        files={"file": ("report.docx", b"not a pdf", "application/octet-stream")},
+    )
+    assert resp.status_code == 400, f"Expected 400, got {resp.status_code}: {resp.text}"
+    body = resp.json()
+    assert body["error"] == "Only .pdf files are accepted"
+    assert "session_id" in body, "Error response must always include session_id"
+    assert body["session_id"] == ""
+    assert not (_PROJECT_ROOT / "data" / "pdfs" / "report.docx").exists(), \
+        "Non-pdf file must never be written to disk"
+    print(f"PASS: POST /ingest/pdf rejects non-.pdf extension with 400 and consistent error shape")
+
+    # ── Test 14: POST /ingest/pdf — unexpected exception → HTTP 500, file deleted ─
+    _test_exc_name = "__api_test_exc__.pdf"
+    _test_exc_dest = _PROJECT_ROOT / "data" / "pdfs" / _test_exc_name
+    try:
+        with patch(pdf_patch, new=AsyncMock(side_effect=RuntimeError("unexpected crash"))):
+            resp = client.post(
+                "/ingest/pdf",
+                files={"file": (_test_exc_name, b"%PDF-1.4 fake", "application/pdf")},
+            )
+        assert resp.status_code == 500, f"Expected 500, got {resp.status_code}: {resp.text}"
+        body = resp.json()
+        assert "unexpected crash" in body["error"]
+        assert "session_id" in body, "Error response must always include session_id"
+        assert body["session_id"] == ""
+        assert not _test_exc_dest.exists(), "File must be deleted after unexpected ingest failure"
+        print(f"PASS: POST /ingest/pdf unexpected exception returns 500 with consistent error shape and deletes uploaded file")
+    finally:
+        if _test_exc_dest.exists():
+            _test_exc_dest.unlink()
 
     print("\nPASS: all api tests passed")
 

@@ -6,7 +6,7 @@ Internally it dispatches to worker callables — not to other graph nodes.
 
 Dispatch flow:
   state["plan"] → get_worker() per task → asyncio.gather (parallel) →
-  {task_results, sources_used}
+  {task_results, sources_used, retrieved_chunks}
 
 Rules:
   - Dispatch is always parallel via asyncio.gather — never a sequential loop.
@@ -88,7 +88,8 @@ async def router_node(state: AgentState) -> dict:
     """
     LangGraph node — dispatches all tasks in the plan to workers in parallel.
 
-    Returns only the changed fields: task_results and sources_used.
+    Returns only the changed fields: task_results, sources_used, retrieved_chunks.
+    retrieved_chunks is populated from every successful Librarian result for RAGAS logging.
     """
     view = router_view(state)
     plan: list[Task] = view["plan"]
@@ -109,9 +110,22 @@ async def router_node(state: AgentState) -> dict:
         if result["success"]
     ]
 
+    # Unpack chunks from successful Librarian results for RAGAS logging.
+    # Librarian output is a JSON array of Chunk dicts.
+    retrieved_chunks: list = []
+    for result in results:
+        if result["success"] and result["worker_type"] == "librarian":
+            try:
+                chunks = json.loads(result["output"])
+                if isinstance(chunks, list):
+                    retrieved_chunks.extend(chunks)
+            except (json.JSONDecodeError, TypeError):
+                pass  # malformed output — skip silently
+
     return {
-        "task_results": task_results,
-        "sources_used": sources_used,
+        "task_results":     task_results,
+        "sources_used":     sources_used,
+        "retrieved_chunks": retrieved_chunks,
     }
 
 
@@ -176,15 +190,23 @@ def test_router():
     with patch(patch_target, side_effect=mock_get_worker):
         result = _asyncio.run(router_node(fake_state))
 
-    assert "task_results" in result
-    assert "sources_used" in result
-    assert set(result.keys()) == {"task_results", "sources_used"}, \
+    assert "task_results"     in result
+    assert "sources_used"     in result
+    assert "retrieved_chunks" in result
+    assert set(result.keys()) == {"task_results", "sources_used", "retrieved_chunks"}, \
         "Node must return only changed fields"
     assert "t1" in result["task_results"]
     assert "t2" in result["task_results"]
     assert result["task_results"]["t1"] is lib_result
     assert result["task_results"]["t2"] is ds_result
     print("PASS: both task results stored, keyed by task_id")
+
+    # ── retrieved_chunks populated from successful librarian output ─
+    assert len(result["retrieved_chunks"]) > 0, \
+        "retrieved_chunks must be non-empty after a successful librarian task"
+    assert result["retrieved_chunks"][0]["chunk_text"] == "Level A: Business Class", \
+        f"Unexpected chunk content: {result['retrieved_chunks'][0]}"
+    print(f"PASS: retrieved_chunks populated — {len(result['retrieved_chunks'])} chunk(s) from librarian")
 
     # ── Test 2: both workers were actually called ──────────────────
     mock_lib_worker.assert_called_once()

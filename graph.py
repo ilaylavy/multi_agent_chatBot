@@ -110,10 +110,17 @@ def test_graph_e2e():
     from core.manifest import get_manifest_index
     from core.state import TaskResult, SourceRef
 
-    # ── Fake LLM responses per agent ─────────────────────────────
+    # ── Fake LLM responses — each embeds a unique marker ─────────
+    # Markers let us assert each mock was actually invoked and its
+    # output flowed through the graph into the accumulated state.
+    #
+    # Auditor exception: it hardcodes notes="" on PASS — nothing from
+    # the LLM notes field survives. Its marker is structural: it is the
+    # ONLY node that writes the "audit_result" key, so we collect output
+    # as "field=value" strings and assert "audit_result=" appears.
     planner_json = json.dumps({"tasks": [
         {"task_id": "t1", "worker_type": "data_scientist",
-         "description": "Get Noa's clearance level from employees table",
+         "description": "MARKER_PLANNER Get Noa's clearance level from employees table",
          "source_id": "employees"},
         {"task_id": "t2", "worker_type": "librarian",
          "description": "Find flight class entitlements for clearance level A",
@@ -122,9 +129,9 @@ def test_graph_e2e():
 
     synthesizer_json = json.dumps({
         "draft_answer": (
-            "Noa holds clearance level A. Per Section 1 of the Travel Policy 2024, "
-            "employees with clearance level A are entitled to Business Class on "
-            "flights exceeding 4 hours."
+            "MARKER_SYNTHESIZER Noa holds clearance level A. Per Section 1 of the "
+            "Travel Policy 2024, employees with clearance level A are entitled to "
+            "Business Class on flights exceeding 4 hours."
         ),
         "confidence": "high",
     })
@@ -136,9 +143,9 @@ def test_graph_e2e():
     })
 
     chat_formatted = (
-        "Yes, Noa can fly Business Class. She holds clearance level A, which per "
-        "Section 1 of the Travel Policy 2024 entitles her to Business Class on "
-        "flights exceeding 4 hours."
+        "MARKER_CHAT Yes, Noa can fly Business Class. She holds clearance level A, "
+        "which per Section 1 of the Travel Policy 2024 entitles her to Business Class "
+        "on flights exceeding 4 hours."
     )
 
     def make_llm_mock(content: str) -> MagicMock:
@@ -149,11 +156,12 @@ def test_graph_e2e():
         return llm
 
     # ── Fake worker callables for the router ─────────────────────
+    # ds_result embeds MARKER_ROUTER in query_used — it flows into task_results
     ds_result = TaskResult(
         task_id="t1", worker_type="data_scientist",
         output=json.dumps({
             "result_value": [{"full_name": "Noa Levi", "clearance_level": "A"}],
-            "query_used":   "df[df['full_name'] == 'Noa Levi'][['full_name','clearance_level']]",
+            "query_used":   "MARKER_ROUTER df[df['full_name'] == 'Noa Levi'][['full_name','clearance_level']]",
             "table_name":   "employees.csv",
             "row_count":    1,
         }),
@@ -196,10 +204,28 @@ def test_graph_e2e():
         "final_sources":        [],
     }
 
+    EXPECTED_NODES = {
+        "chat_node", "planner_node", "router_node",
+        "synthesizer_node", "auditor_node",
+    }
+    EXPECTED_MARKERS = {
+        "MARKER_PLANNER",     # planner LLM mock → task description → plan field
+        "MARKER_ROUTER",      # ds_result.output → task_results field
+        "MARKER_SYNTHESIZER", # synthesizer LLM mock → draft_answer field
+        "audit_result=",      # auditor hardcodes notes="" on PASS; unique because only
+                              # auditor_node writes the "audit_result" key — collected as
+                              # "field=value" strings so the key itself is the marker
+        "MARKER_CHAT",        # chat LLM mock → final_answer field
+    }
+
     print("=== End-to-end graph trace ===")
     print(f"Query: {initial_state['original_query']}\n")
 
     async def _run():
+        fired_nodes:      set[str]  = set()
+        collected_output: list[str] = []          # stringified value of every node output field
+        accumulated_state: dict     = dict(initial_state)
+
         with ExitStack() as stack:
             stack.enter_context(patch("agents.planner.get_llm",     return_value=make_llm_mock(planner_json)))
             stack.enter_context(patch("agents.router.get_worker",    side_effect=mock_get_worker))
@@ -213,19 +239,64 @@ def test_graph_e2e():
                 config={"recursion_limit": 25},
             ):
                 for node_name, node_output in update.items():
+                    fired_nodes.add(node_name)
                     print(f"[{node_name}]")
                     for k, v in node_output.items():
-                        # Truncate long values for readability
                         v_str = str(v)
+                        collected_output.append(f"{k}={v_str}")   # key= prefix enables structural markers
+                        accumulated_state[k] = v
                         print(f"  {k}: {v_str[:120]}{'...' if len(v_str) > 120 else ''}")
                     print()
 
-    asyncio.run(_run())
+        return fired_nodes, collected_output, accumulated_state
 
-    # Structure note for the wiring pass
+    fired_nodes, collected_output, final_state = asyncio.run(_run())
+
+    # ── Assertions ────────────────────────────────────────────────
+    all_output = " ".join(collected_output)
+
+    # 1. All 5 graph nodes must have fired
+    missing_nodes = EXPECTED_NODES - fired_nodes
+    assert not missing_nodes, (
+        f"These graph nodes never fired: {missing_nodes}\n"
+        f"Nodes that did fire: {fired_nodes}"
+    )
+
+    # 2. All 5 markers must appear in the collected node outputs
+    for marker in EXPECTED_MARKERS:
+        assert marker in all_output, (
+            f"Marker '{marker}' not found in any node output — "
+            f"the corresponding node may not have run or its mock was bypassed"
+        )
+
+    # 3. final_answer is a non-empty string
+    final_answer = final_state.get("final_answer", "")
+    assert isinstance(final_answer, str) and final_answer, (
+        f"final_answer must be a non-empty string, got: {final_answer!r}"
+    )
+
+    # 4. final_sources is a list
+    final_sources = final_state.get("final_sources")
+    assert isinstance(final_sources, list), (
+        f"final_sources must be a list, got: {type(final_sources).__name__}"
+    )
+
+    # 5. retry_count is an integer between 0 and 3
+    retry_count = final_state.get("retry_count", -1)
+    assert isinstance(retry_count, int) and 0 <= retry_count <= 3, (
+        f"retry_count must be an integer 0–3, got: {retry_count!r}"
+    )
+
     print("=== Graph edges ===")
     for edge in compiled_graph.get_graph().edges:
         print(f"  {edge.source} -> {edge.target}")
+
+    print("\nPASS: all graph assertions passed")
+    print(f"  Nodes fired  : {sorted(fired_nodes)}")
+    print(f"  Markers found: {sorted(EXPECTED_MARKERS)}")
+    print(f"  final_answer : {final_answer[:80]}{'...' if len(final_answer) > 80 else ''}")
+    print(f"  final_sources: {final_sources}")
+    print(f"  retry_count  : {retry_count}")
 
 
 if __name__ == "__main__":

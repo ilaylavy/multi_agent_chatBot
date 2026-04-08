@@ -19,13 +19,14 @@ pdfs:
   tags:
   - travel policy
   - flight entitlements
-  - booking rules
   - hotel allowances
   - per diem rates
   - reimbursement process
   - clearance levels
   - corporate travel
+  - booking rules
   - expense claims
+  - meal expenses
 - id: hr_handbook_v3
   filename: hr_handbook_v3.pdf
   pages: 64
