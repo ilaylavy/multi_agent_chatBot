@@ -2,6 +2,10 @@
 
 > Read this file and ARCHITECTURE.md before doing anything in this project.
 
+## Current State
+
+Backend complete. All 13 tests passing. Moving to frontend.
+
 ---
 
 ## What You Are Building
@@ -26,6 +30,9 @@ Full design is in ARCHITECTURE.md. Do not deviate from it.
 9. **Router uses asyncio.gather** for parallel worker dispatch — never sequential loops.
 10. **Librarian uses RetrieverInterface** — never calls ChromaDB directly.
 11. **Test files must never write to `data/pdfs/`, `data/tables/`, or either manifest file directly** — use temp directories or `tests/fixtures/` paths only.
+12. **Never use `print()` in production code** — use `logging.getLogger(__name__)` and the appropriate level (`info`, `warning`, `error`).
+13. **Never import private functions (underscore-prefixed) across module boundaries** — request a public wrapper instead.
+14. **Test files must never write to `data/pdfs/`, `data/tables/`, or manifest files** — use `tmp_path` or `tests/fixtures/` only.
 
 ---
 

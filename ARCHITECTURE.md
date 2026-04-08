@@ -316,11 +316,57 @@ Planner only uses string names. Router handles instantiation. They never need to
 
 ---
 
+## Session Management
+
+`api.py` maintains a module-level dict:
+
+```python
+_sessions: dict[str, list[Message]] = {}
+```
+
+On every `POST /chat`:
+1. The handler looks up `session_id` in `_sessions` to retrieve existing `conversation_history` (empty list for a new session).
+2. The retrieved history is placed into `AgentState.conversation_history` before the graph runs.
+3. After the graph completes, `final_state["conversation_history"]` is written back to `_sessions[session_id]`.
+
+**Isolation guarantee:** Two requests with the same `session_id` share history correctly. Two requests with different `session_id` values are fully independent — neither can read the other's history.
+
+**Lifetime:** History persists for the lifetime of the server process. It is lost on restart (v1). Persistent storage (SQLite or Redis) is a deferred feature.
+
+---
+
 ## Observability
 
 - LangSmith enabled from day one.
 - Every node execution is traced: input state, prompt sent, LLM response, output state.
 - Set `LANGSMITH_API_KEY` in `.env`. Enable in `config.yaml`.
+
+---
+
+## Logging
+
+All production code uses Python's standard `logging` module. Each file declares a module-level logger:
+
+```python
+import logging
+logger = logging.getLogger(__name__)
+```
+
+Convention:
+- `logger.info()` — normal operational flow
+- `logger.warning()` — handled errors and degraded-but-continuing paths
+- `logger.error()` — failures that prevent a result from being returned
+
+`api.py` calls `logging.basicConfig` at module startup (before the FastAPI app is created):
+
+```python
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
+```
+
+This configures the root logger so all module loggers in `agents/`, `core/`, and `ingestion/` inherit the same format when the server starts. Test `print()` calls in `test_*` / `__main__` blocks are intentionally left as `print` — they are not production code paths.
 
 ---
 
