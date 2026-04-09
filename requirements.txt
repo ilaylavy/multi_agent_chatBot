@@ -35,5 +35,7 @@ reportlab>=4.0.0
 # Reranking
 flashrank
 
+# Evaluation
+ragas
+
 # Future — reserved, do not remove
-# ragas            # Evaluation — activate post-v1
