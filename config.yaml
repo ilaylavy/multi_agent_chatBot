@@ -45,7 +45,7 @@ retry:
 retrieval:
   initial_fetch: 20       # ChromaDB retrieves this many chunks
   final_top_k: 5          # How many chunks reach the Synthesizer
-  reranker_enabled: false  # Set to true when FlashRank is added in v2
+  reranker_enabled: true
   chunk_size: 500          # Target characters per chunk at ingest time
   chunk_overlap: 50        # Overlap between consecutive chunks at ingest time
 

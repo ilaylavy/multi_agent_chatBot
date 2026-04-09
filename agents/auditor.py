@@ -46,6 +46,16 @@ Check all three of the following:
      accuracy, not citation formatting. A claim passes this check if it is supported
      by the available source data, regardless of whether the source name appears
      inline in the text.
+     When verifying TRACEABILITY: a claim is traceable if the underlying data came
+     from a task result that used the specified source — you do not need to see
+     the source name explicitly written next to every fact in the draft. Check
+     task_results to confirm the data exists. If t1 retrieved Dan Cohen's clearance
+     level from employees and t4 used that clearance level to find his flight
+     entitlement, then the final claim about Dan Cohen's flight entitlement is
+     traceable to both employees and travel_policy_2024 — even if the draft does
+     not say "per the employees table" after every mention of his clearance level.
+     Reject only if a claim has NO traceable task result, or if a claim contradicts
+     the task results.
   3. NO UNSUPPORTED ASSERTIONS — the draft does not assert anything that cannot
      be derived from the provided sources. Speculation or inference beyond the
      evidence fails this check.
@@ -331,6 +341,51 @@ def test_auditor():
         "PASS must set final_answer"
     assert result_prereq["final_answer"] == prereq_state["draft_answer"]
     print("PASS: prerequisite task used but not explicitly restated returns PASS verdict")
+
+    # ── Test 7: intermediate lookup without explicit source name → PASS ──
+    # t1 gets Dan's clearance level from employees, t2 uses it to look up
+    # flight entitlements from travel_policy_2024. The draft says
+    # "Dan is entitled to Premium Economy" without saying "per the employees table".
+    # This must PASS because the claim chains through t1 → t2.
+    chain_state = {
+        **AUDITOR_STATE_PASS,
+        "plan": [
+            {"task_id": "t1", "worker_type": "data_scientist",
+             "description": "Get Dan Cohen's clearance level from employees",
+             "source_id": "employees", "depends_on": None},
+            {"task_id": "t2", "worker_type": "librarian",
+             "description": "Find flight entitlements for the clearance level from t1",
+             "source_id": "travel_policy_2024", "depends_on": "t1"},
+        ],
+        "sources_used": [
+            {"source_id": "employees", "source_type": "csv", "label": "Employee records"},
+            {"source_id": "travel_policy_2024", "source_type": "pdf", "label": "Travel Policy 2024"},
+        ],
+        "draft_answer": (
+            "Dan Cohen is entitled to Premium Economy on international flights "
+            "exceeding 6 hours. For shorter flights, Economy class applies."
+        ),
+    }
+
+    chain_pass_notes = (
+        "All 2 tasks addressed. Dan's clearance level from t1 was used by t2 "
+        "to determine flight entitlement. Claims consistent with sources."
+    )
+    chain_llm_output = json.dumps({
+        "verdict":       "PASS",
+        "notes":         chain_pass_notes,
+        "failed_checks": [],
+    })
+    mock_response.content = chain_llm_output
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+
+    with patch(patch_target, return_value=mock_llm):
+        result_chain = asyncio.run(auditor_node(chain_state))
+
+    assert result_chain["audit_result"]["verdict"] == "PASS", \
+        "Chained task results without explicit source names must PASS"
+    assert result_chain["final_answer"] == chain_state["draft_answer"]
+    print("PASS: chained intermediate lookup without explicit source name returns PASS")
 
     print("\nPASS: all auditor tests passed")
 

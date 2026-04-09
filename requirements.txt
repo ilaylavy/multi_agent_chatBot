@@ -32,6 +32,8 @@ python-multipart>=0.0.9
 httpx>=0.27.0
 reportlab>=4.0.0
 
+# Reranking
+flashrank
+
 # Future — reserved, do not remove
-# flashrank        # Reranker — activate in v2
 # ragas            # Evaluation — activate post-v1
