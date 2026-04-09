@@ -26,90 +26,33 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are a query planner for a multi-agent RAG system.
-Your job is to reason through the user's question and then decompose it into
-an ordered list of tasks. Each task must be assigned to exactly one worker
-and one data source.
+You are a query planner. Decompose the user's question into tasks. Each task \
+retrieves one piece of information from one source listed in the manifest.
 
-Available worker types:
-  - librarian      : searches PDF documents (unstructured text)
-  - data_scientist : queries CSV or SQLite tables (structured data)
+Routing: assign worker_type by source type in the manifest. PDF sources use \
+"librarian". CSV or SQLite sources use "data_scientist".
 
-You will be given:
-  - The user's question.
-  - A manifest listing all available data sources with their IDs, summaries,
-    and a contains field listing what types of information each source holds.
+Dependencies: if a task requires a value that must first be retrieved from \
+another source, create that retrieval as a separate task and set depends_on. \
+If a task can run independently, set depends_on to null. Apply this per entity.
 
-== PHASE 1: REASONING (required before generating tasks) ==
+Use the minimum number of tasks. Only use sources from the manifest. Use the \
+contains field to pick the right source. Keep justifications to one sentence.
 
-Think through these four questions explicitly:
-  1. What specific pieces of information are needed to answer this query?
-  2. For each piece, is it a factual lookup from structured data (table)
-     or a rule/policy from a document (PDF)?
-  3. Which manifest source contains each piece? Use the contains field
-     and source summaries to justify each assignment. If a question is about
-     access control or data classification requirements, check it_security_policy
-     not salary_bands. If a question is about leave or performance, check
-     hr_handbook_v3 not employees.
-  4. What dependencies exist between tasks? Does any task need the output
-     of another before it can run?
-
-Keep justifications to one sentence maximum. Be concise.
-
-== PHASE 2: PLAN ==
-
-Only after completing the reasoning, output the task list.
-
-Rules:
-  - Only assign tasks to sources listed in the manifest.
-  - Use the minimum number of tasks required to answer the question.
-  - task_id values must be unique strings: t1, t2, t3, ...
-  - worker_type must be exactly "librarian" or "data_scientist".
-  - source_id must exactly match an id from the manifest.
-
-Respond with ONLY a JSON object matching this schema — no explanation, no markdown:
+Respond with ONLY JSON — no explanation, no markdown:
 {
   "reasoning": {
-    "information_needed": ["list of specific facts or rules needed"],
+    "information_needed": ["what facts or rules are needed"],
     "source_assignments": [
-      {
-        "info": "what is needed",
-        "source_id": "exact_id_from_manifest",
-        "worker_type": "librarian or data_scientist",
-        "justification": "why this source — reference its summary"
-      }
+      {"info": "...", "source_id": "...", "worker_type": "...", "justification": "..."}
     ],
-    "dependencies": ["e.g. t2 needs t1 output because ..."]
+    "dependencies": ["e.g. t2 needs t1 because ..."]
   },
   "tasks": [
-    {
-      "task_id": "t1",
-      "worker_type": "librarian" | "data_scientist",
-      "description": "what this task should find or retrieve",
-      "source_id": "exact_id_from_manifest",
-      "depends_on": null | "t1"
-    }
+    {"task_id": "t1", "worker_type": "librarian"|"data_scientist",
+     "description": "...", "source_id": "...", "depends_on": null|"t1"}
   ]
 }
-
-depends_on rules:
-  - Set depends_on to null if the task can run independently.
-  - Set depends_on to the task_id of a prerequisite task if this task requires
-    the output of that task to be useful (e.g. first retrieve an employee's role,
-    then look up policy rules for that role).
-  - A task may depend on at most one other task.
-  - Never create circular dependencies.
-
-Cross-table questions:
-  When a question requires comparing or joining data across multiple sources,
-  create multiple tasks with correct dependencies. Never assign a cross-table
-  question to a single task against one source.
-
-  Example — "Which employee has the highest salary?":
-    t1: data_scientist against salary_bands — find the clearance_level and
-        department with the highest salary_max.
-    t2 (depends_on t1): data_scientist against employees — find the employee
-        whose clearance_level and department match the result from t1.
 """
 
 _RETRY_NOTE_SECTION = """\
@@ -449,6 +392,100 @@ tables:
     assert any("it_security_policy" in j or "password" in j.lower() for j in justifications), \
         "Reasoning must include justification referencing the IT security policy PDF"
     print("PASS: PDF source uses librarian, table uses data_scientist, reasoning has justified source assignments")
+
+    # ── Test 7: entity requiring unknown property → prerequisite task ─
+    # "What is Dan Cohen's flight entitlement?" requires looking up Dan's
+    # property first, then using it to find the entitlement.
+    prereq_output = json.dumps({
+        "reasoning": {
+            "information_needed": [
+                "Dan Cohen's property from a structured source",
+                "Entitlement rule from a policy document using that property"
+            ],
+            "source_assignments": [
+                {"info": "Dan's property", "source_id": "employees",
+                 "worker_type": "data_scientist",
+                 "justification": "employees table contains entity properties"},
+                {"info": "Entitlement rule", "source_id": "travel_policy_2024",
+                 "worker_type": "librarian",
+                 "justification": "travel policy contains entitlement rules"}
+            ],
+            "dependencies": ["t2 needs t1 output because the entitlement depends on a property not yet known"]
+        },
+        "tasks": [
+            {"task_id": "t1", "worker_type": "data_scientist",
+             "description": "Look up Dan Cohen's property from employees",
+             "source_id": "employees", "depends_on": None},
+            {"task_id": "t2", "worker_type": "librarian",
+             "description": "Find entitlement rule using the property from t1",
+             "source_id": "travel_policy_2024", "depends_on": "t1"},
+        ]
+    })
+    mock_response_prereq = MagicMock()
+    mock_response_prereq.content = prereq_output
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response_prereq)
+
+    prereq_state = {
+        **PLANNER_STATE,
+        "original_query": "What is Dan Cohen's flight entitlement?",
+    }
+
+    with patch(patch_target, return_value=mock_llm):
+        result_prereq = asyncio.run(planner_node(prereq_state))
+
+    plan_prereq = result_prereq["plan"]
+    assert len(plan_prereq) >= 2, \
+        f"Query requiring unknown property must produce at least 2 tasks, got {len(plan_prereq)}"
+    # First task is the property lookup (no dependency)
+    assert plan_prereq[0]["depends_on"] is None, \
+        "Prerequisite lookup task must have no dependency"
+    # Second task depends on first
+    assert plan_prereq[1]["depends_on"] == "t1", \
+        f"Policy task must depend on prerequisite, got depends_on={plan_prereq[1]['depends_on']!r}"
+    print("PASS: entity requiring unknown property produces prerequisite task with correct depends_on")
+
+    # ── Test 8: direct query needing no property lookup → single task ─
+    # "What is the password rotation policy?" can be answered directly from
+    # a document — no entity property lookup needed.
+    direct_output = json.dumps({
+        "reasoning": {
+            "information_needed": ["Password rotation policy from a document"],
+            "source_assignments": [
+                {"info": "Password rotation policy", "source_id": "it_security_policy",
+                 "worker_type": "librarian",
+                 "justification": "IT security policy contains password rules"}
+            ],
+            "dependencies": []
+        },
+        "tasks": [
+            {"task_id": "t1", "worker_type": "librarian",
+             "description": "Find the password rotation policy",
+             "source_id": "it_security_policy", "depends_on": None},
+        ]
+    })
+    mock_response_direct = MagicMock()
+    mock_response_direct.content = direct_output
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response_direct)
+
+    direct_state = {
+        **PLANNER_STATE,
+        "original_query": "What is the password rotation policy?",
+        "manifest_context": """
+pdfs:
+  - id: it_security_policy
+    summary: IT Security Policy covering password requirements, data classification, and incidents.
+""",
+    }
+
+    with patch(patch_target, return_value=mock_llm):
+        result_direct = asyncio.run(planner_node(direct_state))
+
+    plan_direct = result_direct["plan"]
+    assert len(plan_direct) == 1, \
+        f"Direct query must produce exactly 1 task, got {len(plan_direct)}"
+    assert plan_direct[0]["depends_on"] is None, \
+        "Direct task must have no dependency"
+    print("PASS: direct query needing no property lookup produces single task with no dependency")
 
     print("\nPASS: all planner tests passed")
 

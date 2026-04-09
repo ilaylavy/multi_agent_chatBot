@@ -31,27 +31,22 @@ _SYSTEM_PROMPT = """\
 You are a synthesis specialist. Your job is to combine the results from multiple
 data retrieval tasks into one clear, accurate answer to the user's question.
 
-Rules (strictly enforced):
+Rules:
   - Use ONLY information present in the task results provided. Do not invent, infer,
     or add any facts not explicitly stated in the results.
   - Address every task in the plan — if a task succeeded, use its result.
   - If some tasks failed, acknowledge what is missing and answer only from
     what is available.
-  - Write in clear, direct prose suitable for a business user.
-  - Every specific fact MUST include an explicit inline source citation
-    (e.g. "per the employees table, ..." or "according to the Travel Policy 2024, ...").
-    An answer without inline citations will be rejected by the auditor.
+  - Write in clear, direct prose suitable for the end user.
+  - Every specific fact should include an inline source citation
+    (e.g. "per the [source name], ..." or "according to [document name], ...").
+  - Use the exact value from each entity's own task result. Never substitute a
+    value from one task result into another entity's answer.
 
-Respond with ONLY a JSON object matching this schema — no explanation, no markdown:
+Respond with ONLY a JSON object — no explanation, no markdown:
 {
-  "draft_answer": "your full answer here",
-  "confidence":   "high" | "medium" | "low"
+  "draft_answer": "your full answer here"
 }
-
-confidence guide:
-  high   — all tasks succeeded and results fully answer the question
-  medium — some tasks failed or results are partial
-  low    — most tasks failed or results are insufficient to answer
 """
 
 _TASK_RESULT_TEMPLATE = """\
@@ -221,7 +216,6 @@ def test_synthesizer():
     # ── Test 2: node returns only draft_answer and sources_used ───
     fake_llm_output = json.dumps({
         "draft_answer": "Noa holds clearance level A, which entitles her to Business Class on flights over 4 hours per the Travel Policy 2024.",
-        "confidence":   "high",
     })
     mock_response = MagicMock()
     mock_response.content = fake_llm_output
@@ -351,6 +345,79 @@ def test_synthesizer():
     assert "ALL TASKS FAILED" not in user_prompt_partial, \
         "ALL TASKS FAILED block must not appear when only some tasks failed"
     print("PASS: all-tasks-failed injects specific error messages; partial failure does not")
+
+    # ── Test 6: two entities with different values for the same field ─
+    # t1 returns clearance_level=B for Dan, t3 returns clearance_level=D for Tal.
+    # The synthesizer must use the correct value for each entity — never swap.
+    multi_entity_state = {
+        **SYNTHESIZER_STATE,
+        "original_query": "What flight class are Dan Cohen and Tal Mizrahi entitled to?",
+        "plan": [
+            {"task_id": "t1", "worker_type": "data_scientist",
+             "description": "Get Dan Cohen's clearance level", "source_id": "employees",
+             "depends_on": None},
+            {"task_id": "t2", "worker_type": "librarian",
+             "description": "Find flight entitlements for clearance level B",
+             "source_id": "travel_policy_2024", "depends_on": "t1"},
+            {"task_id": "t3", "worker_type": "data_scientist",
+             "description": "Get Tal Mizrahi's clearance level", "source_id": "employees",
+             "depends_on": None},
+            {"task_id": "t4", "worker_type": "librarian",
+             "description": "Find flight entitlements for clearance level D",
+             "source_id": "travel_policy_2024", "depends_on": "t3"},
+        ],
+        "task_results": {
+            "t1": {"task_id": "t1", "worker_type": "data_scientist",
+                   "output": json.dumps({"clearance_level": "B", "full_name": "Dan Cohen"}),
+                   "success": True, "error": None},
+            "t2": {"task_id": "t2", "worker_type": "librarian",
+                   "output": json.dumps([{"chunk_text": "Clearance B: Premium Economy on flights over 6 hours.",
+                                          "source_pdf": "travel_policy.pdf", "page_number": 2, "relevance_score": 0.95}]),
+                   "success": True, "error": None},
+            "t3": {"task_id": "t3", "worker_type": "data_scientist",
+                   "output": json.dumps({"clearance_level": "D", "full_name": "Tal Mizrahi"}),
+                   "success": True, "error": None},
+            "t4": {"task_id": "t4", "worker_type": "librarian",
+                   "output": json.dumps([{"chunk_text": "Clearance D: Economy class on all flights.",
+                                          "source_pdf": "travel_policy.pdf", "page_number": 3, "relevance_score": 0.92}]),
+                   "success": True, "error": None},
+        },
+    }
+
+    # LLM must use B for Dan and D for Tal — the fake response models correct behavior
+    multi_entity_llm_output = json.dumps({
+        "draft_answer": (
+            "Per the employees table, Dan Cohen holds clearance level B, which "
+            "entitles him to Premium Economy on flights over 6 hours according to "
+            "the Travel Policy 2024. Per the employees table, Tal Mizrahi holds "
+            "clearance level D, which entitles her to Economy class on all flights "
+            "according to the Travel Policy 2024."
+        ),
+    })
+    mock_response_multi = MagicMock()
+    mock_response_multi.content = multi_entity_llm_output
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response_multi)
+
+    with patch(patch_target, return_value=mock_llm):
+        result_multi = asyncio.run(synthesizer_node(multi_entity_state))
+
+    draft = result_multi["draft_answer"]
+    # Dan must be associated with B, Tal with D
+    dan_idx = draft.index("Dan Cohen")
+    tal_idx = draft.index("Tal Mizrahi")
+    # Find the clearance level mentioned nearest after each name
+    dan_section = draft[dan_idx:tal_idx]
+    tal_section = draft[tal_idx:]
+    assert "level B" in dan_section or "clearance B" in dan_section.lower(), \
+        f"Dan Cohen's section must reference clearance B, got: {dan_section}"
+    assert "level D" in tal_section or "clearance D" in tal_section.lower(), \
+        f"Tal Mizrahi's section must reference clearance D, got: {tal_section}"
+    # Ensure values are NOT swapped
+    assert "level D" not in dan_section and "clearance d" not in dan_section.lower(), \
+        "Dan Cohen must NOT have clearance D"
+    assert "level B" not in tal_section and "clearance b" not in tal_section.lower(), \
+        "Tal Mizrahi must NOT have clearance B"
+    print("PASS: two entities with different clearance levels use correct values (no swap)")
 
     print("\nPASS: all synthesizer tests passed")
 

@@ -29,63 +29,46 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are a quality auditor for an AI answer system. Your job is to verify that a
-draft answer meets strict accuracy and completeness standards before it reaches
-a user.
+You are a quality auditor. Verify the draft answer against the plan and task results.
 
 Check all three of the following:
 
-  1. COMPLETENESS — every task in the plan is addressed in the draft answer.
-     Tasks marked as depends_on prerequisites are intermediate lookup steps —
-     they exist to gather data for subsequent tasks, not to appear as conclusions
-     in the final answer. A task is considered addressed if its result was used
-     to answer a downstream task or the final question — not if it is explicitly
-     restated. Only reject if a task result was genuinely missing or fabricated.
-  2. TRACEABILITY — every factual claim in the draft answer is consistent with and
-     derivable from the sources listed in sources_used. You are verifying factual
-     accuracy, not citation formatting. A claim passes this check if it is supported
-     by the available source data, regardless of whether the source name appears
-     inline in the text.
-     When verifying TRACEABILITY: a claim is traceable if the underlying data came
-     from a task result that used the specified source — you do not need to see
-     the source name explicitly written next to every fact in the draft. Check
-     task_results to confirm the data exists. If t1 retrieved Dan Cohen's clearance
-     level from employees and t4 used that clearance level to find his flight
-     entitlement, then the final claim about Dan Cohen's flight entitlement is
-     traceable to both employees and travel_policy_2024 — even if the draft does
-     not say "per the employees table" after every mention of his clearance level.
-     Reject only if a claim has NO traceable task result, or if a claim contradicts
-     the task results.
+  1. COMPLETENESS — a task is addressed if its result contributed to the final
+     answer, directly or through a dependent task.
+  2. ACCURACY — every factual claim in the draft must match the task results.
+     Compare specific values (numbers, categories, dates) in the draft against
+     the corresponding task result output. If a value does not match, note:
+     "Value mismatch: task result shows [actual] but draft states [claimed]."
+     A claim is also acceptable if it follows logically from a chain of task
+     results, even without explicit source attribution in the text.
   3. NO UNSUPPORTED ASSERTIONS — the draft does not assert anything that cannot
-     be derived from the provided sources. Speculation or inference beyond the
-     evidence fails this check.
+     be derived from the task results. Speculation beyond the evidence fails.
 
 Verdict rules:
-  - PASS : all three checks pass. notes must be a brief confirmation — e.g.
-           "All 2 tasks addressed. Claims supported by employees and travel_policy_2024 sources."
-           Never leave notes empty on PASS.
-  - FAIL : one or more checks fail. notes must explain exactly what is wrong
-           and what the Planner should do differently on retry.
+  - PASS: all three checks pass. Notes must briefly confirm.
+  - FAIL: one or more checks fail. Notes must describe exactly what is wrong.
 
-Respond with ONLY a JSON object matching this schema — no explanation, no markdown:
+Respond with ONLY JSON — no explanation, no markdown:
 {
   "verdict":       "PASS" | "FAIL",
-  "notes":         "brief confirmation if PASS, specific actionable feedback if FAIL",
+  "notes":         "brief confirmation if PASS, specific description of issues if FAIL",
   "failed_checks": []
 }
 
-failed_checks must be a list containing zero or more of:
-  "COMPLETENESS", "TRACEABILITY", "NO_UNSUPPORTED_ASSERTIONS"
+failed_checks: zero or more of "COMPLETENESS", "ACCURACY", "NO_UNSUPPORTED_ASSERTIONS"
 """
 
 _USER_TEMPLATE = """\
 ORIGINAL QUESTION:
 {original_query}
 
-PLAN ({n_tasks} tasks — all must be addressed):
+PLAN ({n_tasks} tasks):
 {plan_block}
 
-SOURCES USED (claims must trace to one of these):
+TASK RESULTS:
+{results_block}
+
+SOURCES USED:
 {sources_block}
 
 DRAFT ANSWER:
@@ -100,11 +83,12 @@ DRAFT ANSWER:
 def auditor_view(state: AgentState) -> dict:
     """
     Returns only the fields the Auditor's LLM prompt may see.
-    Does NOT include conversation_history, task_results, retry_count, or retry_notes.
+    Does NOT include conversation_history, retry_count, or retry_notes.
     """
     return {
         "original_query": state["original_query"],
         "plan":           state["plan"],
+        "task_results":   state["task_results"],
         "draft_answer":   state["draft_answer"],
         "sources_used":   state["sources_used"],
     }
@@ -119,6 +103,17 @@ def _format_plan_block(plan: list) -> str:
         f"  [{task['task_id']}] {task['description']} (source: {task['source_id']})"
         for task in plan
     )
+
+
+def _format_results_block(plan: list, task_results: dict) -> str:
+    lines = []
+    for task in plan:
+        task_id = task["task_id"]
+        result = task_results.get(task_id, {})
+        status = "FAILED" if result.get("success") is False else "SUCCESS"
+        output = result.get("output", "(no output)")
+        lines.append(f"  [{task_id}] {status}: {output}")
+    return "\n".join(lines) if lines else "  (none)"
 
 
 def _format_sources_block(sources_used: list) -> str:
@@ -144,6 +139,7 @@ async def auditor_node(state: AgentState) -> dict:
         original_query=view["original_query"],
         n_tasks=len(view["plan"]),
         plan_block=_format_plan_block(view["plan"]),
+        results_block=_format_results_block(view["plan"], view["task_results"]),
         sources_block=_format_sources_block(view["sources_used"]),
         draft_answer=view["draft_answer"],
     )
@@ -204,9 +200,8 @@ def test_auditor():
 
     # ── Test 1: auditor_view returns exactly the right fields ──────
     view = auditor_view(AUDITOR_STATE_PASS)
-    assert set(view.keys()) == {"original_query", "plan", "draft_answer", "sources_used"}
+    assert set(view.keys()) == {"original_query", "plan", "task_results", "draft_answer", "sources_used"}
     assert "conversation_history" not in view
-    assert "task_results"         not in view
     assert "retry_count"          not in view
     assert "retry_notes"          not in view
     print("PASS: auditor_view returns correct fields and excludes forbidden ones")
@@ -253,7 +248,7 @@ def test_auditor():
     fail_llm_output = json.dumps({
         "verdict":       "FAIL",
         "notes":         fail_notes,
-        "failed_checks": ["TRACEABILITY", "NO_UNSUPPORTED_ASSERTIONS"],
+        "failed_checks": ["ACCURACY", "NO_UNSUPPORTED_ASSERTIONS"],
     })
     mock_response.content = fail_llm_output
 
@@ -386,6 +381,46 @@ def test_auditor():
         "Chained task results without explicit source names must PASS"
     assert result_chain["final_answer"] == chain_state["draft_answer"]
     print("PASS: chained intermediate lookup without explicit source name returns PASS")
+
+    # ── Test 8: value mismatch between task result and draft → FAIL ──
+    # t1 returns category=X but the draft states category=Y.
+    # This must FAIL with ACCURACY in failed_checks.
+    mismatch_state = {
+        **AUDITOR_STATE_PASS,
+        "plan": [
+            {"task_id": "t1", "worker_type": "data_scientist",
+             "description": "Look up the category for Entity A",
+             "source_id": "records", "depends_on": None},
+        ],
+        "task_results": {
+            "t1": {"task_id": "t1", "worker_type": "data_scientist",
+                   "output": '{"result_value": "X"}', "success": True, "error": None},
+        },
+        "sources_used": [
+            {"source_id": "records", "source_type": "csv", "label": "Records table"},
+        ],
+        "draft_answer": "Entity A belongs to category Y.",
+    }
+
+    mismatch_notes = "Value mismatch: task result shows category=X but draft states category=Y."
+    mismatch_llm_output = json.dumps({
+        "verdict":       "FAIL",
+        "notes":         mismatch_notes,
+        "failed_checks": ["ACCURACY"],
+    })
+    mock_response.content = mismatch_llm_output
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+
+    with patch(patch_target, return_value=mock_llm):
+        result_mismatch = asyncio.run(auditor_node(mismatch_state))
+
+    assert result_mismatch["audit_result"]["verdict"] == "FAIL", \
+        "Value mismatch must return FAIL verdict"
+    assert "Value mismatch" in result_mismatch["audit_result"]["notes"], \
+        "FAIL notes must describe the value mismatch"
+    assert "retry_count" in result_mismatch, "FAIL must increment retry_count"
+    assert "final_answer" not in result_mismatch, "FAIL must not set final_answer"
+    print("PASS: value mismatch between task result and draft returns FAIL with ACCURACY")
 
     print("\nPASS: all auditor tests passed")
 

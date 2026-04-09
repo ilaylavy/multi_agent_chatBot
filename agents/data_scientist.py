@@ -151,26 +151,26 @@ Rules:
   - Select only the columns needed to answer the task — not all columns.
     For pandas: df[df['x'] == 'val'][['col_a', 'col_b']], not df[df['x'] == 'val'].
     For SQL: SELECT col_a, col_b FROM ..., not SELECT * FROM ...
-    Example: if the task is "find the employee name", query only full_name.
+    Example: if the task is "find the entity name", query only the name column.
   - When counting or grouping, always include the group label column in the
     result. The result must be interpretable without knowing which group each
     number belongs to.
-    For pandas: df.groupby('department').size().reset_index(name='count'), not
-    df.groupby('department').size() alone (which loses the label in some formats).
-    For SQL: SELECT department, COUNT(*) as count FROM ... GROUP BY department,
+    For pandas: df.groupby('[group_column]').size().reset_index(name='count'), not
+    df.groupby('[group_column]').size() alone (which loses the label in some formats).
+    For SQL: SELECT [group_column], COUNT(*) as count FROM ... GROUP BY [group_column],
     not just SELECT COUNT(*) FROM ...
   - Never guess or invent values — only query what is in the table.
   - If the task cannot be answered from this table, set query to an empty string
     and explain why in the explanation field.
 
-Pandas examples (use these patterns):
-  Filter rows:       df[df['department'] == 'Engineering'][['full_name', 'salary']]
-  Get max value:     df['salary'].max()
-  Get row with max:  df.loc[df['salary'].idxmax()][['full_name', 'salary']]
-  Sort and first N:  df.sort_values('salary', ascending=False).head(3)
-  Count unique:      df['department'].nunique()
-  Group aggregate:   df.groupby('department')['salary'].mean()
-  Count per group:   df.groupby('department').size().reset_index(name='count')
+Pandas examples (use these patterns — replace column_a, column_b with actual column names from the schema):
+  Filter rows:       df[df['column_a'] == 'category_value'][['column_a', 'column_b']]
+  Get max value:     df['column_b'].max()
+  Get row with max:  df.loc[df['column_b'].idxmax()][['column_a', 'column_b']]
+  Sort and first N:  df.sort_values('column_b', ascending=False).head(3)
+  Count unique:      df['column_a'].nunique()
+  Group aggregate:   df.groupby('column_a')['column_b'].mean()
+  Count per group:   df.groupby('column_a').size().reset_index(name='count')
 
 Respond with ONLY a JSON object matching this schema — no explanation, no markdown:
 {
