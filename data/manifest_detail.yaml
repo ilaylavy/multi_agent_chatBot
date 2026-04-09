@@ -9,28 +9,98 @@ pdfs:
 - id: travel_policy_2024
   filename: travel_policy_2024.pdf
   type: pdf
-  pages: 2
+  pages: 4
   sections:
   - Flight Class Entitlements by Clearance Level
   - Booking Rules
   - Hotel Nightly Allowances
-  - Per Diem Meal Rates
-  - Receipt and Reimbursement Process
+  - Per Diem Rates
+  - Expense Reimbursement Process
   tags:
   - travel policy
   - flight entitlements
+  - booking rules
   - hotel allowances
   - per diem rates
-  - reimbursement process
+  - expense reimbursement
   - clearance levels
   - corporate travel
-  - booking rules
-  - expense claims
-  - meal expenses
+  - employee entitlements
+- id: hr_handbook_v3
+  filename: hr_handbook_v3.pdf
+  type: pdf
+  pages: 4
+  sections:
+  - 'Chapter 1: Onboarding'
+  - First Week Checklist
+  - Required Documents
+  - IT Setup
+  - 'Chapter 2: Leave Policy'
+  - Annual Leave
+  - Sick Leave
+  - Parental Leave
+  - 'Chapter 3: Performance Reviews'
+  - Rating Scale
+  tags:
+  - onboarding
+  - leave policy
+  - performance reviews
+  - HR procedures
+  - employee handbook
+  - compliance training
+  - IT setup
+  - annual leave
+  - sick leave
+  - parental leave
+- id: it_security_policy
+  filename: it_security_policy.pdf
+  type: pdf
+  pages: 3
+  sections:
+  - 'Section 1: Password Policy'
+  - 'Section 2: Data Classification'
+  - 'Section 3: Security Incident Reporting'
+  tags:
+  - IT Security
+  - Password Policy
+  - Data Classification
+  - Multi-Factor Authentication
+  - Security Incident
+  - Data Protection
+  - Access Control
+  - Encryption
+  - Corporate Systems
 tables:
+- id: salary_bands
+  filename: salary_bands.sqlite
+  type: sqlite
+  base_path: tests/fixtures/tables/
+  row_count_approx: 16
+  columns:
+  - name: id
+    type: integer
+    description: A unique identifier for each record.
+  - name: clearance_level
+    type: string
+    description: The security clearance level required for the department.
+  - name: department
+    type: string
+    description: The name of the department.
+  - name: salary_min
+    type: integer
+    description: The minimum salary offered in the department.
+  - name: salary_max
+    type: integer
+    description: The maximum salary offered in the department.
+  - name: currency
+    type: string
+    description: The currency in which the salary is paid.
+  relationships: []
+  table_name: salary_bands
 - id: employees
   filename: employees.csv
   type: csv
+  base_path: tests/fixtures/tables/
   row_count_approx: 10
   columns:
   - name: employee_id
@@ -56,28 +126,3 @@ tables:
     description: The employee ID of the employee's manager, if applicable.
   relationships:
   - manager_id links to employee_id
-- id: salary_bands
-  filename: salary_bands.sqlite
-  type: sqlite
-  row_count_approx: 16
-  columns:
-  - name: id
-    type: integer
-    description: A unique identifier for each record.
-  - name: clearance_level
-    type: string
-    description: The security clearance level required for the department.
-  - name: department
-    type: string
-    description: The name of the department.
-  - name: salary_min
-    type: integer
-    description: The minimum salary offered in the department.
-  - name: salary_max
-    type: integer
-    description: The maximum salary offered in the department.
-  - name: currency
-    type: string
-    description: The currency in which the salary is paid.
-  relationships: []
-  table_name: salary_bands

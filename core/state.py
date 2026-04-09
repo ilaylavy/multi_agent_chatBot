@@ -73,6 +73,7 @@ class AgentState(TypedDict):
     # Planning
     plan:                 List[Task]
     manifest_context:     str
+    planner_reasoning:    str                  # structured reasoning from the Planner LLM
 
     # Execution
     task_results:         Dict[str, TaskResult]
@@ -182,6 +183,7 @@ def test_state():
         "plan":                 [{"task_id": "t1", "worker_type": "data_scientist",
                                   "description": "Look up Q3 revenue", "source_id": "financials"}],
         "manifest_context":     "financials: quarterly revenue table",
+        "planner_reasoning":    "",
         "task_results":         {"t1": {"task_id": "t1", "worker_type": "data_scientist",
                                         "output": "Q3 revenue: $4.2M", "success": True, "error": None}},
         "sources_used":         [{"source_id": "financials", "source_type": "csv", "label": "Financials CSV"}],

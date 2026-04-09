@@ -81,6 +81,9 @@ def _format_index(raw: dict) -> str:
             lines.append(f"  - id: {entry['id']}")
             lines.append(f"    name: {entry['name']}")
             lines.append(f"    summary: {entry['summary']}")
+            contains = entry.get("contains", [])
+            if contains:
+                lines.append(f"    contains: {', '.join(contains)}")
             lines.append("")
 
     if raw.get("tables"):
@@ -89,6 +92,9 @@ def _format_index(raw: dict) -> str:
             lines.append(f"  - id: {entry['id']}")
             lines.append(f"    name: {entry['name']}")
             lines.append(f"    summary: {entry['summary']}")
+            contains = entry.get("contains", [])
+            if contains:
+                lines.append(f"    contains: {', '.join(contains)}")
             lines.append("")
 
     return "\n".join(lines).rstrip()

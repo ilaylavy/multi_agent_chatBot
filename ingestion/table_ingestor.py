@@ -244,6 +244,7 @@ async def ingest_table(
         "id":              source_id,
         "filename":        file_path.name,
         "type":            file_type,
+        "base_path":       "data/tables/",
         "row_count_approx": row_count,
         "columns":         columns,
         "relationships":   relationships,
