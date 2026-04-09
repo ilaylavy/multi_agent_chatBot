@@ -54,6 +54,8 @@ Think through these four questions explicitly:
   4. What dependencies exist between tasks? Does any task need the output
      of another before it can run?
 
+Keep justifications to one sentence maximum. Be concise.
+
 == PHASE 2: PLAN ==
 
 Only after completing the reasoning, output the task list.
@@ -162,7 +164,7 @@ async def planner_node(state: AgentState) -> dict:
         retry_section=retry_section,
     )
 
-    llm = get_llm("planner")
+    llm = get_llm("planner").bind(max_tokens=1500)
     response = await llm.ainvoke([
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user",   "content": user_message},
@@ -248,6 +250,7 @@ def test_planner():
 
     mock_llm = MagicMock()
     mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+    mock_llm.bind.return_value = mock_llm  # .bind(max_tokens=...) returns self
 
     # ── Test 1: view excludes retry_notes when retry_count == 0 ──
     view = planner_view(PLANNER_STATE)

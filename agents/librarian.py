@@ -5,7 +5,7 @@ This is a registry worker callable, NOT a LangGraph node.
 Signature: async librarian_worker(state, task) -> TaskResult
 
 Retrieval flow:
-  ChromaDB (retrieval.initial_fetch) → [RERANKER SLOT — v2] → retrieval.final_top_k → LLM relevance filter → TaskResult
+  ChromaDB (retrieval.initial_fetch) → Reranker → retrieval.final_top_k → LLM relevance filter → TaskResult
 
 The Librarian always codes against RetrieverInterface.
 To swap to a GraphRAG backend: pass a different RetrieverInterface subclass.
@@ -21,6 +21,7 @@ from typing import List
 from core.llm_config import _load_config, get_llm
 from core.manifest import get_manifest_detail
 from core.parse import parse_llm_json
+from core.reranker import get_reranker
 from core.retriever import ChromaRetriever, RetrieverInterface
 from core.state import AgentState, Chunk, Task, TaskResult
 
@@ -125,9 +126,8 @@ async def librarian_worker(
         top_k=_INITIAL_FETCH,
     )
 
-    # ── RERANKER SLOT — pass chunks through FlashRank here in v2 ─
-    # For now: take top _FINAL_TOP_K by relevance_score
-    chunks = sorted(chunks, key=lambda c: c["relevance_score"], reverse=True)
+    # ── Rerank — FlashRank when enabled, passthrough when disabled ─
+    chunks = get_reranker().rerank(query=task["description"], chunks=chunks)
     chunks = chunks[:_FINAL_TOP_K]
 
     # ── Build chunks block for LLM prompt ────────────────────────
@@ -231,11 +231,11 @@ def test_librarian():
              "source_pdf": "travel_policy.pdf", "page_number": 3, "relevance_score": 0.97}
         ]
     })
-    mock_response = MagicMock()
-    mock_response.content = fake_llm_output
+    mock_response_ok = MagicMock()
+    mock_response_ok.content = fake_llm_output
 
     mock_llm = MagicMock()
-    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response_ok)
 
     patch_target = f"{__name__}.get_llm"
 
@@ -291,6 +291,41 @@ def test_librarian():
         except ValueError as exc:
             assert "I cannot retrieve that information." in str(exc)
             print("PASS: ValueError raised with raw output on bad JSON")
+
+    # ── Test 6: reranker is called when enabled ───────────────────
+    # Reset LLM mock for a successful call
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response_ok)
+    mock_retriever.search = AsyncMock(return_value=fake_chunks)
+
+    mock_reranker = MagicMock()
+    mock_reranker.rerank.return_value = list(reversed(fake_chunks))
+
+    reranker_patch_target = f"{__name__}.get_reranker"
+    with patch(patch_target, return_value=mock_llm), \
+         patch("agents.librarian.get_manifest_detail", return_value="fake manifest detail"), \
+         patch(reranker_patch_target, return_value=mock_reranker):
+
+        asyncio.run(librarian_worker(fake_state, fake_task, retriever=mock_retriever))
+
+    mock_reranker.rerank.assert_called_once()
+    call_kwargs = mock_reranker.rerank.call_args
+    assert call_kwargs[1]["query"] == fake_task["description"], \
+        "Reranker must receive task description as query"
+    assert call_kwargs[1]["chunks"] == fake_chunks, \
+        "Reranker must receive raw chunks from retriever"
+    print("PASS: reranker called with correct query and chunks when enabled")
+
+    # ── Test 7: passthrough reranker returns chunks unchanged ─────
+    from core.reranker import PassthroughRanker, FlashRanker
+
+    with patch(reranker_patch_target) as mock_get:
+        mock_get.return_value = PassthroughRanker()
+        with patch(patch_target, return_value=mock_llm), \
+             patch("agents.librarian.get_manifest_detail", return_value="fake manifest detail"):
+            asyncio.run(librarian_worker(fake_state, fake_task, retriever=mock_retriever))
+        mock_get.assert_called_once()
+        assert isinstance(mock_get.return_value, PassthroughRanker)
+    print("PASS: PassthroughRanker used when reranker is disabled")
 
     print("\nPASS: all librarian tests passed")
 
