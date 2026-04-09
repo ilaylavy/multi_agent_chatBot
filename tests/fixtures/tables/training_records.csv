@@ -1,0 +1,26 @@
+record_id,employee_id,training_name,completion_date,expiry_date,status,score
+1,1,Security Awareness,2024-01-10,2025-01-10,Completed,92
+2,1,Data Privacy,2024-03-15,2025-03-15,Completed,88
+3,1,Leadership Fundamentals,2024-06-20,2025-06-20,Completed,95
+4,2,Security Awareness,2023-11-05,2024-11-05,Expired,78
+5,2,Financial Compliance,2024-04-12,2025-04-12,Completed,85
+6,3,Security Awareness,2024-02-18,2025-02-18,Completed,90
+7,3,Data Privacy,2024-05-22,2025-05-22,Completed,87
+8,3,Leadership Fundamentals,,,In Progress,
+9,4,Security Awareness,2024-01-25,2025-01-25,Completed,72
+10,4,Emergency Procedures,2023-08-10,2024-08-10,Expired,65
+11,5,Security Awareness,2024-03-01,2025-03-01,Completed,91
+12,5,Financial Compliance,2024-07-14,2025-07-14,Completed,89
+13,5,Leadership Fundamentals,2024-09-30,2025-09-30,Completed,94
+14,6,Security Awareness,2024-04-05,2025-04-05,Completed,70
+15,6,Data Privacy,2023-06-15,2024-06-15,Expired,68
+16,7,Security Awareness,2024-02-28,2025-02-28,Completed,83
+17,7,Emergency Procedures,2024-08-20,2025-08-20,Completed,77
+18,8,Security Awareness,2024-05-10,2025-05-10,Completed,80
+19,8,Data Privacy,,,In Progress,
+20,8,Emergency Procedures,2024-06-01,2025-06-01,Completed,75
+21,9,Security Awareness,2024-03-20,2025-03-20,Completed,69
+22,9,Financial Compliance,2023-09-25,2024-09-25,Expired,62
+23,10,Security Awareness,2024-01-05,2025-01-05,Completed,96
+24,10,Leadership Fundamentals,2024-04-18,2025-04-18,Completed,98
+25,10,Data Privacy,2024-07-30,2025-07-30,Completed,93

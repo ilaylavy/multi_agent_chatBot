@@ -1,0 +1,13 @@
+project_id,project_name,department,lead_employee_id,budget,spent,status,start_date,end_date
+1,Cloud Migration Phase 1,Engineering,1,120000,115000,Completed,2024-01-15,2024-06-30
+2,Annual Audit Automation,Finance,5,45000,48000,Completed,2024-02-01,2024-05-15
+3,Employee Portal Redesign,HR,3,60000,35000,Active,2024-06-01,
+4,CRM Integration,Sales,5,80000,82500,Completed,2024-01-20,2024-07-10
+5,Cloud Migration Phase 2,Engineering,10,95000,62000,Active,2024-07-01,
+6,Compliance Training System,HR,3,30000,28000,Completed,2024-03-10,2024-08-20
+7,Revenue Dashboard,Finance,5,55000,12000,On Hold,2024-08-01,
+8,API Gateway Upgrade,Engineering,7,70000,70500,Completed,2024-04-01,2024-09-15
+9,Lead Scoring Model,Sales,5,40000,18000,Active,2024-09-01,
+10,Data Lake Setup,Engineering,1,150000,45000,On Hold,2024-10-01,
+11,Benefits Platform Migration,HR,3,35000,34000,Completed,2024-02-15,2024-06-01
+12,Sales Forecasting Tool,Sales,5,65000,63000,Completed,2024-03-01,2024-08-30
