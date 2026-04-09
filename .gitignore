@@ -15,6 +15,10 @@ data/pdfs/
 data/tables/
 data/chroma_db/
 
+# Test fixtures — committed to git (NOT gitignored)
+!tests/fixtures/tables/
+!tests/fixtures/pdfs/
+
 # Keep manifest files in git (they are config, not data)
 !data/manifest_index.yaml
 !data/manifest_detail.yaml

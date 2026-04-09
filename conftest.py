@@ -22,12 +22,12 @@ def pytest_configure(config):
 @pytest.fixture(scope="session", autouse=True)
 def employees_csv():
     """
-    Create data/tables/employees.csv once before the session starts and
-    remove it after the full session ends. This prevents test-ordering
+    Create tests/fixtures/tables/employees.csv once before the session starts
+    and remove it after the full session ends. This prevents test-ordering
     fragility: the mock suite and integration tests both rely on this file,
     and it must not be deleted between them.
     """
-    csv_path = _PROJECT_ROOT / "data" / "tables" / "employees.csv"
+    csv_path = _PROJECT_ROOT / "tests" / "fixtures" / "tables" / "employees.csv"
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     csv_path.write_text(_EMPLOYEES_CSV_CONTENT)
     yield

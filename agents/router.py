@@ -164,12 +164,13 @@ async def router_node(state: AgentState) -> dict:
     # Reconstruct ordered results list to match plan order for sources_used / chunks
     results: list[TaskResult] = [task_results[t["task_id"]] for t in plan]
 
-    # Build sources_used from successful tasks only
-    sources_used: list[SourceRef] = [
-        _build_source_ref(task)
-        for task, result in zip(plan, results)
-        if result["success"]
-    ]
+    # Build sources_used from successful tasks only, deduplicated by source_id
+    seen_source_ids: set[str] = set()
+    sources_used: list[SourceRef] = []
+    for task, result in zip(plan, results):
+        if result["success"] and task["source_id"] not in seen_source_ids:
+            seen_source_ids.add(task["source_id"])
+            sources_used.append(_build_source_ref(task))
 
     # Unpack chunks from successful Librarian results for RAGAS logging.
     # Librarian output is a JSON array of Chunk dicts.
@@ -452,6 +453,54 @@ def test_router():
         f"Error must name the failed prerequisite, got: {t2_skipped['error']}"
     mock_lib_spy.assert_not_called(), "Librarian worker must not be called when prerequisite failed"
     print(f"PASS: dependent task skipped when prerequisite failed; worker not called")
+
+    # ── Test 8: duplicate source_id deduplicated in sources_used ────
+    dup_task_1: Task = {
+        "task_id": "t1", "worker_type": "data_scientist",
+        "description": "Get Noa's clearance level",
+        "source_id": "employees", "depends_on": None,
+    }
+    dup_task_2: Task = {
+        "task_id": "t2", "worker_type": "data_scientist",
+        "description": "Get Noa's department",
+        "source_id": "employees", "depends_on": None,
+    }
+    dup_task_3: Task = {
+        "task_id": "t3", "worker_type": "librarian",
+        "description": "Find flight rules",
+        "source_id": "travel_policy_2024", "depends_on": None,
+    }
+
+    dup_state: AgentState = {**fake_state, "plan": [dup_task_1, dup_task_2, dup_task_3]}
+
+    dup_ds_result_1 = TaskResult(task_id="t1", worker_type="data_scientist",
+                                  output='{"result_value": "A"}', success=True, error=None)
+    dup_ds_result_2 = TaskResult(task_id="t2", worker_type="data_scientist",
+                                  output='{"result_value": "Engineering"}', success=True, error=None)
+    dup_lib_result  = TaskResult(task_id="t3", worker_type="librarian",
+                                  output='[{"chunk_text": "Business Class"}]', success=True, error=None)
+
+    dup_results_map = {"t1": dup_ds_result_1, "t2": dup_ds_result_2, "t3": dup_lib_result}
+
+    async def dup_worker(state, task):
+        return dup_results_map[task["task_id"]]
+
+    def dup_get_worker(worker_type: str):
+        return dup_worker
+
+    with patch(patch_target, side_effect=dup_get_worker):
+        result_dup = _asyncio.run(router_node(dup_state))
+
+    # All 3 tasks succeeded
+    assert len(result_dup["task_results"]) == 3
+    # sources_used must have only 2 entries (employees appears once, not twice)
+    src_ids = [s["source_id"] for s in result_dup["sources_used"]]
+    assert len(src_ids) == 2, \
+        f"sources_used must deduplicate by source_id, got {len(src_ids)}: {src_ids}"
+    assert src_ids.count("employees") == 1, \
+        f"employees must appear exactly once, got {src_ids.count('employees')}"
+    assert "travel_policy_2024" in src_ids
+    print(f"PASS: duplicate source_id deduplicated in sources_used: {src_ids}")
 
     print("\nPASS: all router tests passed")
 

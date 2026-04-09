@@ -105,6 +105,7 @@ class TraceInfo(BaseModel):
     chat_formatted_response: bool
     step_timings:            Dict[str, float]
     retry_history:           List[dict]
+    planner_reasoning:       Optional[str]            = None
 
 
 class ChatResponse(BaseModel):
@@ -267,6 +268,7 @@ async def chat(req: ChatRequest):
         "rewritten_query":      "",
         "plan":                 [],
         "manifest_context":     get_manifest_index(),
+        "planner_reasoning":    "",
         "task_results":         {},
         "sources_used":         [],
         "retrieved_chunks":     [],
@@ -351,6 +353,7 @@ async def chat(req: ChatRequest):
         chat_formatted_response=chat_formatted,
         step_timings=step_timings,
         retry_history=final_state.get("retry_history", []),
+        planner_reasoning=final_state.get("planner_reasoning", "") if ran_pipeline else None,
     )
 
     # Build and store conversation entry

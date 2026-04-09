@@ -27,8 +27,9 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
 You are a query planner for a multi-agent RAG system.
-Your job is to decompose the user's question into an ordered list of tasks.
-Each task must be assigned to exactly one worker and one data source.
+Your job is to reason through the user's question and then decompose it into
+an ordered list of tasks. Each task must be assigned to exactly one worker
+and one data source.
 
 Available worker types:
   - librarian      : searches PDF documents (unstructured text)
@@ -36,7 +37,26 @@ Available worker types:
 
 You will be given:
   - The user's question.
-  - A manifest listing all available data sources with their IDs and summaries.
+  - A manifest listing all available data sources with their IDs, summaries,
+    and a contains field listing what types of information each source holds.
+
+== PHASE 1: REASONING (required before generating tasks) ==
+
+Think through these four questions explicitly:
+  1. What specific pieces of information are needed to answer this query?
+  2. For each piece, is it a factual lookup from structured data (table)
+     or a rule/policy from a document (PDF)?
+  3. Which manifest source contains each piece? Use the contains field
+     and source summaries to justify each assignment. If a question is about
+     access control or data classification requirements, check it_security_policy
+     not salary_bands. If a question is about leave or performance, check
+     hr_handbook_v3 not employees.
+  4. What dependencies exist between tasks? Does any task need the output
+     of another before it can run?
+
+== PHASE 2: PLAN ==
+
+Only after completing the reasoning, output the task list.
 
 Rules:
   - Only assign tasks to sources listed in the manifest.
@@ -47,6 +67,18 @@ Rules:
 
 Respond with ONLY a JSON object matching this schema — no explanation, no markdown:
 {
+  "reasoning": {
+    "information_needed": ["list of specific facts or rules needed"],
+    "source_assignments": [
+      {
+        "info": "what is needed",
+        "source_id": "exact_id_from_manifest",
+        "worker_type": "librarian or data_scientist",
+        "justification": "why this source — reference its summary"
+      }
+    ],
+    "dependencies": ["e.g. t2 needs t1 output because ..."]
+  },
   "tasks": [
     {
       "task_id": "t1",
@@ -153,7 +185,11 @@ async def planner_node(state: AgentState) -> dict:
             f"Missing key in LLM output: {exc}\nRaw output: {response.content}"
         ) from exc
 
-    return {"plan": tasks}
+    # Log reasoning for trace visibility
+    reasoning = data.get("reasoning", {})
+    reasoning_str = json.dumps(reasoning, indent=2) if reasoning else ""
+
+    return {"plan": tasks, "planner_reasoning": reasoning_str}
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +204,27 @@ def test_planner():
 
     # ── Fake LLM response ────────────────────────────────────────
     fake_llm_output = json.dumps({
+        "reasoning": {
+            "information_needed": [
+                "Noa's clearance level from the employee table",
+                "Flight class entitlements for that clearance level from the travel policy"
+            ],
+            "source_assignments": [
+                {
+                    "info": "Noa's clearance level",
+                    "source_id": "employees",
+                    "worker_type": "data_scientist",
+                    "justification": "employees table contains clearance levels for each employee"
+                },
+                {
+                    "info": "Flight class entitlements by clearance level",
+                    "source_id": "travel_policy_2024",
+                    "worker_type": "librarian",
+                    "justification": "travel_policy_2024 PDF contains flight class entitlements by clearance level"
+                }
+            ],
+            "dependencies": ["t2 needs t1 output because we need Noa's clearance level to look up entitlements"]
+        },
         "tasks": [
             {
                 "task_id":     "t1",
@@ -231,8 +288,10 @@ def test_planner():
     assert result["plan"][1]["worker_type"] == "librarian"
     assert result["plan"][1]["source_id"] == "travel_policy_2024"
     assert result["plan"][1]["depends_on"] == "t1"
-    assert set(result.keys()) == {"plan"}, "Node must return only changed fields"
-    print(f"PASS: planner_node returns correct plan: {result['plan']}")
+    assert set(result.keys()) == {"plan", "planner_reasoning"}, "Node must return plan + planner_reasoning"
+    assert isinstance(result["planner_reasoning"], str)
+    assert len(result["planner_reasoning"]) > 0, "planner_reasoning must be non-empty when reasoning is present"
+    print(f"PASS: planner_node returns correct plan with reasoning")
 
     # ── Test 4: bad JSON raises ValueError with raw output ────────
     bad_response = MagicMock()
@@ -249,6 +308,16 @@ def test_planner():
 
     # ── Test 5: cross-table query produces ≥2 tasks with a dependency ──
     cross_table_output = json.dumps({
+        "reasoning": {
+            "information_needed": ["highest salary_max from salary_bands", "employee name matching that band"],
+            "source_assignments": [
+                {"info": "highest salary_max", "source_id": "salary_bands", "worker_type": "data_scientist",
+                 "justification": "salary_bands contains min/max salary ranges"},
+                {"info": "employee name", "source_id": "employees", "worker_type": "data_scientist",
+                 "justification": "employees table has names and clearance levels"}
+            ],
+            "dependencies": ["t2 needs t1 to know which clearance_level/department to match"]
+        },
         "tasks": [
             {
                 "task_id":     "t1",
@@ -298,6 +367,85 @@ tables:
     assert plan[1]["depends_on"] == "t1", \
         f"Second task must depend on t1, got depends_on={plan[1]['depends_on']!r}"
     print(f"PASS: cross-table query produces {len(plan)} tasks across {source_ids} with dependency chain")
+
+    # ── Test 6: PDF query uses librarian, table query uses data_scientist, reasoning has justifications ──
+    mixed_output = json.dumps({
+        "reasoning": {
+            "information_needed": [
+                "Noa's department from the employees table",
+                "Password rotation policy from the IT security policy document"
+            ],
+            "source_assignments": [
+                {
+                    "info": "Noa's department",
+                    "source_id": "employees",
+                    "worker_type": "data_scientist",
+                    "justification": "employees table contains department information for each employee"
+                },
+                {
+                    "info": "Password rotation policy",
+                    "source_id": "it_security_policy",
+                    "worker_type": "librarian",
+                    "justification": "it_security_policy PDF contains password requirements and rotation rules"
+                }
+            ],
+            "dependencies": []
+        },
+        "tasks": [
+            {
+                "task_id": "t1",
+                "worker_type": "data_scientist",
+                "description": "Look up Noa's department from the employees table",
+                "source_id": "employees",
+                "depends_on": None,
+            },
+            {
+                "task_id": "t2",
+                "worker_type": "librarian",
+                "description": "Find the password rotation policy",
+                "source_id": "it_security_policy",
+                "depends_on": None,
+            },
+        ]
+    })
+    mock_response_mixed = MagicMock()
+    mock_response_mixed.content = mixed_output
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response_mixed)
+
+    mixed_state = {
+        **PLANNER_STATE,
+        "original_query": "What department is Noa in and what is the password rotation policy?",
+        "manifest_context": """
+pdfs:
+  - id: it_security_policy
+    summary: IT Security Policy covering password requirements, data classification, and incidents.
+tables:
+  - id: employees
+    summary: Master employee list with names, departments, and clearance levels.
+""",
+    }
+
+    with patch(patch_target, return_value=mock_llm):
+        result_mixed = asyncio.run(planner_node(mixed_state))
+
+    plan_m = result_mixed["plan"]
+    # Table task must use data_scientist
+    table_task = next(t for t in plan_m if t["source_id"] == "employees")
+    assert table_task["worker_type"] == "data_scientist", \
+        f"Table source must use data_scientist, got {table_task['worker_type']}"
+    # PDF task must use librarian
+    pdf_task = next(t for t in plan_m if t["source_id"] == "it_security_policy")
+    assert pdf_task["worker_type"] == "librarian", \
+        f"PDF source must use librarian, got {pdf_task['worker_type']}"
+    # Reasoning must include justifications referencing the sources
+    reasoning_str = result_mixed["planner_reasoning"]
+    reasoning_obj = json.loads(reasoning_str)
+    justifications = [sa["justification"] for sa in reasoning_obj["source_assignments"]]
+    assert any("employees" in j for j in justifications), \
+        "Reasoning must include justification referencing the employees table"
+    assert any("it_security_policy" in j or "password" in j.lower() for j in justifications), \
+        "Reasoning must include justification referencing the IT security policy PDF"
+    print("PASS: PDF source uses librarian, table uses data_scientist, reasoning has justified source assignments")
 
     print("\nPASS: all planner tests passed")
 

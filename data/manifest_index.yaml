@@ -10,14 +10,51 @@ pdfs:
 - id: travel_policy_2024
   name: Travel Policy 2024
   summary: The Travel Policy 2024 outlines flight class entitlements, booking rules,
-    hotel allowances, per diem meal rates, and reimbursement processes based on employee
-    clearance levels.
+    hotel allowances, per diem rates, and expense reimbursement processes based on
+    employee clearance levels.
+  contains:
+  - flight class entitlements
+  - hotel allowances
+  - per diem rates
+  - expense approval thresholds
+  - booking rules
+- id: hr_handbook_v3
+  name: Hr Handbook V3
+  summary: The HR Handbook v3 outlines onboarding procedures, leave policies, and
+    performance review processes for employees.
+  contains:
+  - annual leave policy
+  - sick leave policy
+  - parental leave
+  - performance review process
+  - performance improvement plan
+  - onboarding
+  - code of conduct
+- id: it_security_policy
+  name: It Security Policy
+  summary: The IT Security Policy outlines password requirements, data classification,
+    and security incident reporting procedures.
+  contains:
+  - password policy
+  - data classification
+  - access control requirements
+  - security incident reporting
+  - breach reporting timeline
+  - contact information
 tables:
 - id: employees
   name: Employees
   summary: This table contains information about employees, including their personal
     details, department, and managerial relationships.
+  contains:
+  - employee names
+  - departments
+  - clearance levels
+  - hire dates
+  - manager relationships
 - id: salary_bands
   name: Salary Bands
   summary: This table contains information about departments, their clearance levels,
     and salary ranges.
+  contains:
+  - salary ranges by clearance level and department

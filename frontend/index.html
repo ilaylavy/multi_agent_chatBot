@@ -800,6 +800,7 @@ function appendAssistantBubble(data, query) {
         ${hasAudit ? `<div><strong>Audit verdict:</strong> ${verdict}</div>` : ''}
         ${notes != null ? `<div><strong>Audit notes:</strong> ${notes}</div>` : ''}
         ${hasPlan ? `<div><strong>Plan:</strong></div><ol>${planHtml}</ol>` : ''}
+        ${t.planner_reasoning ? `<details class="retry-attempt" style="margin-top:0.4rem"><summary><strong>Planner Reasoning</strong></summary><div class="retry-attempt-body"><pre style="white-space:pre-wrap;max-height:300px">${esc(t.planner_reasoning)}</pre></div></details>` : ''}
         ${synthDraft ? `<div style="margin-top:0.6rem"><strong>Synthesizer Draft</strong> <em style="color:var(--pico-muted-color);font-size:0.75rem">(Draft before Audit)</em></div><div class="task-output" style="margin-top:0.25rem;white-space:pre-wrap">${esc(synthDraft)}</div>` : ''}
         ${timingsHtml}
       </div>

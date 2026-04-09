@@ -70,6 +70,8 @@ QUERY REWRITING (PLAN only):
   If conversation_history is non-empty and the query refers to something mentioned
   earlier (e.g. "What about Dan?" after a question about Noa's salary), rewrite it
   into a fully self-contained query (e.g. "What is Dan Cohen's salary?").
+  If the user asks multiple questions, rewrite ALL of them with context, not just
+  the first. The rewritten query must contain every question from the original message.
   If no rewriting is needed, copy the original query into rewritten_query unchanged.
 
 Respond with ONLY a JSON object — no explanation, no markdown:
@@ -99,6 +101,10 @@ Rules:
     "according to salary_bands", "per Section 1 of the Travel Policy" —
     sources are shown separately in the UI.
   - Maximum 2 sentences for simple factual answers.
+  - Keep the answer concise but never drop conditions, exceptions, thresholds,
+    or approval requirements — these are critical for policy questions. If the
+    answer contains a rule with an exception such as "permitted only when X" or
+    "requires approval for Y", always include that exception in the final answer.
   - Do not add information not in the answer.
   - Do not reveal internal system details (plans, retries, task IDs, worker names).
   - Do not hedge or add uncertainty.
@@ -560,6 +566,42 @@ def test_chat():
         "Deliver user template must not include sources block — sources are shown in the UI"
     print("PASS: FORMAT AND DELIVER rewrites answer differently from synthesizer; prompt removes attribution")
 
+    # ── Test 6b: FORMAT AND DELIVER preserves conditions from synthesizer output ──
+    # The synthesizer output contains a conditional rule. The Chat Agent must
+    # preserve the condition in the formatted answer — not drop it for brevity.
+    conditional_synth = (
+        "Employees with clearance level C are entitled to Economy class on all flights. "
+        "Business Class is permitted on flights exceeding 8 hours with prior manager approval."
+    )
+    conditional_formatted = (
+        "Clearance C employees fly Economy, but Business Class is permitted on "
+        "flights over 8 hours with prior manager approval."
+    )
+    mock_resp_cond = MagicMock()
+    mock_resp_cond.content = conditional_formatted
+    mock_llm_cond = MagicMock()
+    mock_llm_cond.ainvoke = AsyncMock(return_value=mock_resp_cond)
+
+    cond_state = {
+        **base_state,
+        "final_answer":  conditional_synth,
+        "final_sources": [{"source_id": "travel_policy_2024", "source_type": "pdf", "label": "Travel Policy 2024"}],
+        "audit_result":  {"verdict": "PASS", "notes": "Verified."},
+    }
+    with patch(patch_target, return_value=mock_llm_cond):
+        result_cond = asyncio.run(chat_node(cond_state))
+
+    assert result_cond["final_answer"] == conditional_formatted
+    # The condition "8 hours" and "manager approval" must survive formatting
+    assert "8 hours" in result_cond["final_answer"], \
+        "Formatted answer must preserve the flight-duration threshold"
+    assert "manager approval" in result_cond["final_answer"], \
+        "Formatted answer must preserve the approval requirement"
+    # Verify the prompt instructs preservation of conditions
+    assert "never drop conditions" in _DELIVER_SYSTEM_PROMPT.lower(), \
+        "Deliver prompt must instruct LLM to never drop conditions"
+    print("PASS: FORMAT AND DELIVER preserves conditional rules (thresholds + approval requirements)")
+
     # ── Test 7a: RETRY EXHAUSTION — no synthesizer_output → hardcoded failure, no LLM call ──
     mock_llm_exhaust = MagicMock()
     mock_llm_exhaust.ainvoke = AsyncMock()
@@ -771,6 +813,44 @@ def test_chat():
     assert result_bad_audit["final_answer"] == _FAILURE_MESSAGE, \
         "Delivery with non-PASS audit must return the hardcoded failure message"
     print("PASS: delivery path rejects when audit verdict is not PASS")
+
+    # ── Test 14: multi-question message rewrites all questions ──────
+    multi_q_rewritten = (
+        "What is Dan Cohen's clearance level? "
+        "What is Dan Cohen's salary range? "
+        "Can Dan Cohen fly Business Class?"
+    )
+    multi_q_json = json.dumps({
+        "intent":          "PLAN",
+        "rewritten_query": multi_q_rewritten,
+        "response":        None,
+    })
+    mock_resp_multi = MagicMock()
+    mock_resp_multi.content = multi_q_json
+    mock_llm_multi = MagicMock()
+    mock_llm_multi.ainvoke = AsyncMock(return_value=mock_resp_multi)
+
+    multi_state = {
+        **base_state,
+        "original_query": "What is his clearance level? What is his salary? Can he fly Business?",
+        "conversation_history": [
+            {"role": "user",      "content": "Tell me about Dan Cohen"},
+            {"role": "assistant", "content": "Dan Cohen is in the Finance department with clearance B."},
+        ],
+    }
+    with patch(patch_target, return_value=mock_llm_multi):
+        result_multi = asyncio.run(chat_node(multi_state))
+
+    rq = result_multi["rewritten_query"]
+    assert "clearance" in rq.lower(), \
+        f"Rewritten query must include the clearance question, got: {rq}"
+    assert "salary" in rq.lower(), \
+        f"Rewritten query must include the salary question, got: {rq}"
+    assert "business" in rq.lower() or "fly" in rq.lower(), \
+        f"Rewritten query must include the flight question, got: {rq}"
+    assert "Dan Cohen" in rq, \
+        f"Rewritten query must resolve 'his' to 'Dan Cohen', got: {rq}"
+    print("PASS: multi-question message rewrites all 3 questions with resolved context")
 
     print("\nPASS: all chat tests passed")
 
