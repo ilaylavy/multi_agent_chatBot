@@ -4,6 +4,13 @@
 
 # LLM Configuration
 # To swap a model: change the value here. Agent code never changes.
+# Per-agent provider override: add  provider: ollama  (or  provider: openai)
+# to any agent entry to override the top-level provider for that agent only.
+# Example:
+#   synthesizer:
+#     model: qwen2.5:7b
+#     temperature: 0.1
+#     provider: ollama
 llm:
   provider: openai
   agents:
@@ -24,7 +31,7 @@ llm:
       temperature: 0.0
     synthesizer:
       model: gpt-4o
-      temperature: 0.1
+      temperature: 0.1  
     auditor:
       model: gpt-4o
       temperature: 0.0
@@ -63,4 +70,4 @@ session:
 api:
   host: 0.0.0.0
   port: 8000
-  reload: true          # Set to false in production
+  reload: false          # Set to false in production

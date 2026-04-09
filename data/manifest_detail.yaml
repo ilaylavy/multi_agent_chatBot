@@ -27,23 +27,6 @@ pdfs:
   - booking rules
   - expense claims
   - meal expenses
-- id: hr_handbook_v3
-  filename: hr_handbook_v3.pdf
-  pages: 64
-  sections:
-  - 'Section 1: Onboarding Checklist'
-  - 'Section 2: Leave Policies (Annual, Sick, Parental)'
-  - 'Section 3: Performance Review Process'
-  - 'Section 4: Disciplinary Procedures'
-  - 'Section 5: Code of Conduct'
-  - 'Section 6: Benefits Overview'
-  tags:
-  - hr
-  - onboarding
-  - leave
-  - benefits
-  - conduct
-  - performance
 tables:
 - id: employees
   filename: employees.csv
@@ -80,19 +63,19 @@ tables:
   columns:
   - name: id
     type: integer
-    description: A unique identifier for each job position.
+    description: A unique identifier for each record.
   - name: clearance_level
     type: string
-    description: The security clearance level required for the job position.
+    description: The security clearance level required for the department.
   - name: department
     type: string
-    description: The department to which the job position belongs.
+    description: The name of the department.
   - name: salary_min
     type: integer
-    description: The minimum salary offered for the job position.
+    description: The minimum salary offered in the department.
   - name: salary_max
     type: integer
-    description: The maximum salary offered for the job position.
+    description: The maximum salary offered in the department.
   - name: currency
     type: string
     description: The currency in which the salary is paid.

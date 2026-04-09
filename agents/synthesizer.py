@@ -71,6 +71,14 @@ PLAN ({n_tasks} tasks, {n_failed} failed):
 
 TASK RESULTS:
 {results_block}
+{all_failed_block}"""
+
+_ALL_FAILED_BLOCK = """\
+
+IMPORTANT — ALL TASKS FAILED. Use these specific failure reasons in your draft,
+not generic failure language. Tell the user exactly what was not found or what
+went wrong:
+{error_lines}
 """
 
 
@@ -152,12 +160,21 @@ async def synthesizer_node(state: AgentState) -> dict:
         if view["task_results"].get(task["task_id"], {}).get("success") is False
     )
 
+    all_failed_block = ""
+    if n_tasks > 0 and n_failed == n_tasks:
+        error_lines = "\n".join(
+            f"  - [{task['task_id']}] {view['task_results'].get(task['task_id'], {}).get('error', 'unknown error')}"
+            for task in view["plan"]
+        )
+        all_failed_block = _ALL_FAILED_BLOCK.format(error_lines=error_lines)
+
     user_message = _USER_TEMPLATE.format(
         original_query=view["original_query"],
         n_tasks=n_tasks,
         n_failed=n_failed,
         plan_block=_format_plan_block(view),
         results_block=_format_results_block(view),
+        all_failed_block=all_failed_block,
     )
 
     llm = get_llm("synthesizer")
@@ -175,8 +192,9 @@ async def synthesizer_node(state: AgentState) -> dict:
         ) from exc
 
     return {
-        "draft_answer": draft_answer,
-        "sources_used": view["sources_used"],
+        "draft_answer":       draft_answer,
+        "synthesizer_output": draft_answer,
+        "sources_used":       view["sources_used"],
     }
 
 
@@ -214,11 +232,13 @@ def test_synthesizer():
     with patch(patch_target, return_value=mock_llm):
         result = asyncio.run(synthesizer_node(SYNTHESIZER_STATE))
 
-    assert set(result.keys()) == {"draft_answer", "sources_used"}, \
+    assert set(result.keys()) == {"draft_answer", "synthesizer_output", "sources_used"}, \
         f"Node must return only changed fields, got: {set(result.keys())}"
     assert "Business Class" in result["draft_answer"]
+    assert result["synthesizer_output"] == result["draft_answer"], \
+        "synthesizer_output must be a snapshot of draft_answer"
     assert result["sources_used"] is SYNTHESIZER_STATE["sources_used"]
-    print("PASS: node returns only draft_answer and sources_used")
+    print("PASS: node returns draft_answer, synthesizer_output, and sources_used")
 
     # ── Test 3: failed TaskResult appears explicitly in the prompt ─
     state_with_failure = {
@@ -271,6 +291,66 @@ def test_synthesizer():
         except ValueError as exc:
             assert "Here is a summary of the results." in str(exc)
             print("PASS: ValueError raised with raw output on bad LLM JSON")
+
+    # ── Test 5: all tasks failed → specific error messages injected ─
+    state_all_failed = {
+        **SYNTHESIZER_STATE,
+        "task_results": {
+            "t1": {
+                "task_id":     "t1",
+                "worker_type": "data_scientist",
+                "output":      '{"error": "Query returned no results. The requested data was not found in employees.csv."}',
+                "success":     False,
+                "error":       "Query returned no results. The requested data was not found in employees.csv.",
+            },
+            "t2": {
+                "task_id":     "t2",
+                "worker_type": "librarian",
+                "output":      '{"error": "Skipped: prerequisite task t1 failed."}',
+                "success":     False,
+                "error":       "Skipped: prerequisite task t1 failed.",
+            },
+        },
+    }
+
+    captured_all_failed: list = []
+
+    async def capture_all_failed(messages):
+        captured_all_failed.extend(messages)
+        return mock_response
+
+    mock_llm.ainvoke = capture_all_failed
+
+    with patch(patch_target, return_value=mock_llm):
+        asyncio.run(synthesizer_node(state_all_failed))
+
+    user_prompt_all = next(m["content"] for m in captured_all_failed if m["role"] == "user")
+    assert "ALL TASKS FAILED"                                          in user_prompt_all, \
+        "Prompt must include ALL TASKS FAILED heading"
+    assert "Query returned no results"                                 in user_prompt_all, \
+        "Prompt must include specific error from t1"
+    assert "employees.csv"                                             in user_prompt_all, \
+        "Prompt must name the table from the t1 error"
+    assert "Skipped: prerequisite task t1 failed"                     in user_prompt_all, \
+        "Prompt must include specific error from t2"
+    assert "2 failed"                                                  in user_prompt_all, \
+        "Prompt must state 2 tasks failed"
+    # Partial-failure case must NOT include the ALL TASKS FAILED block
+    captured_partial: list = []
+
+    async def capture_partial(messages):
+        captured_partial.extend(messages)
+        return mock_response
+
+    mock_llm.ainvoke = capture_partial
+
+    with patch(patch_target, return_value=mock_llm):
+        asyncio.run(synthesizer_node(state_with_failure))   # 1 failed, 1 success
+
+    user_prompt_partial = next(m["content"] for m in captured_partial if m["role"] == "user")
+    assert "ALL TASKS FAILED" not in user_prompt_partial, \
+        "ALL TASKS FAILED block must not appear when only some tasks failed"
+    print("PASS: all-tasks-failed injects specific error messages; partial failure does not")
 
     print("\nPASS: all synthesizer tests passed")
 

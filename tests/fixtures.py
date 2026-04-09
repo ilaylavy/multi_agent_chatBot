@@ -13,6 +13,8 @@ CHAT_AGENT_STATE: dict[str, Any] = {
     "conversation_history": [
         {"role": "user", "content": "Can Noa fly Business Class?"}
     ],
+    "chat_intent": "PLAN",
+    "rewritten_query": "",
     "final_answer": "Yes. Noa holds clearance level A, which entitles her to Business Class on flights over 4 hours.",
     "final_sources": [
         {"source_id": "travel_policy_2024", "source_type": "pdf", "label": "Travel Policy 2024"},
@@ -31,6 +33,8 @@ CHAT_AGENT_STATE: dict[str, Any] = {
 PLANNER_STATE: dict[str, Any] = {
     "original_query": "Can Noa fly Business Class?",
     "session_id": "test-session-001",
+    "chat_intent": "PLAN",
+    "rewritten_query": "",
     "manifest_context": """
 pdfs:
   - id: travel_policy_2024

@@ -1,11 +1,944 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Multi-Agent RAG</title>
+  <title>RAG Dev Dashboard</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
+  <style>
+    /* ── Layout ─────────────────────────────────────────────────── */
+    html, body { height: 100%; margin: 0; }
+
+    .dashboard {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      height: 100vh;
+      padding: 1rem;
+      box-sizing: border-box;
+    }
+
+    .panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border: 1px solid var(--pico-muted-border-color);
+      border-radius: var(--pico-border-radius);
+      padding: 1rem;
+    }
+
+    .panel h2 { margin: 0 0 0.75rem 0; font-size: 1.1rem; }
+
+    /* ── Type badges ─────────────────────────────────────────────── */
+    .badge {
+      display: inline-block;
+      padding: 0.15em 0.55em;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      color: #fff;
+      flex-shrink: 0;
+    }
+    .badge-pdf    { background: #3b82f6; }
+    .badge-csv    { background: #16a34a; }
+    .badge-sqlite { background: #9333ea; }
+
+    /* ── Source cards ────────────────────────────────────────────── */
+    #sources-list {
+      flex: 1;
+      overflow-y: auto;
+      margin-bottom: 0.75rem;
+    }
+
+    .source-card {
+      margin-bottom: 0.6rem;
+      padding: 0.65rem 0.75rem;
+      border: 1px solid var(--pico-muted-border-color);
+      border-radius: var(--pico-border-radius);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      justify-content: space-between;
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      flex: 1;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.9rem;
+    }
+    .card-title:hover { text-decoration: underline; }
+
+    .card-summary {
+      font-size: 0.8rem;
+      color: var(--pico-muted-color);
+      margin-top: 0.3rem;
+      cursor: pointer;
+      line-height: 1.4;
+    }
+
+    .card-detail {
+      display: none;
+      margin-top: 0.5rem;
+      padding-top: 0.5rem;
+      border-top: 1px solid var(--pico-muted-border-color);
+      font-size: 0.8rem;
+    }
+    .card-detail.open { display: block; }
+
+    .tag {
+      display: inline-block;
+      padding: 0.1em 0.45em;
+      margin: 0.15em;
+      background: var(--pico-secondary-background, #f0f0f0);
+      border-radius: 4px;
+      font-size: 0.72rem;
+    }
+
+    .col-list { margin: 0.25rem 0 0 0; padding-left: 1.1rem; }
+    .col-list li { margin-bottom: 0; }
+
+    /* ── Delete button ───────────────────────────────────────────── */
+    .btn-delete {
+      padding: 0.18em 0.55em;
+      font-size: 0.72rem;
+      background: #dc2626;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      flex-shrink: 0;
+      line-height: 1.4;
+    }
+    .btn-delete:hover { background: #b91c1c; }
+
+    /* ── Upload section ──────────────────────────────────────────── */
+    .upload-section {
+      border-top: 1px solid var(--pico-muted-border-color);
+      padding-top: 0.75rem;
+      flex-shrink: 0;
+    }
+
+    .upload-buttons { display: flex; gap: 0.5rem; }
+    .upload-buttons button { margin: 0; font-size: 0.85rem; padding: 0.4em 0.9em; }
+
+    .form-row { display: flex; gap: 0.4rem; margin-top: 0.25rem; }
+    .form-row button { margin: 0; font-size: 0.82rem; padding: 0.35em 0.8em; }
+
+    #upload-status {
+      font-size: 0.82rem;
+      margin-top: 0.45rem;
+      min-height: 1.2em;
+      line-height: 1.4;
+    }
+    .status-ok  { color: #16a34a; }
+    .status-err { color: #dc2626; }
+
+    /* ── Chat panel ──────────────────────────────────────────────── */
+    .chat-panel { }
+
+    .chat-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.25rem;
+    }
+    .chat-header h2 { margin: 0; }
+    .chat-header-buttons { display: flex; gap: 0.4rem; }
+    .chat-header button { margin: 0; font-size: 0.82rem; padding: 0.3em 0.75em; }
+
+    #session-label {
+      font-size: 0.72rem;
+      color: var(--pico-muted-color);
+      margin-bottom: 0.5rem;
+      font-family: monospace;
+      word-break: break-all;
+    }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      margin-bottom: 0.75rem;
+      padding-right: 0.25rem;
+    }
+
+    .msg {
+      margin-bottom: 0.85rem;
+      padding: 0.6rem 0.8rem;
+      border-radius: var(--pico-border-radius);
+      font-size: 0.88rem;
+      line-height: 1.5;
+    }
+    .msg-user {
+      background: var(--pico-primary);
+      color: var(--pico-primary-inverse);
+      margin-left: 15%;
+    }
+    .msg-assistant {
+      background: var(--pico-card-background-color, #f9f9f9);
+      border: 1px solid var(--pico-muted-border-color);
+    }
+    .msg-error {
+      background: #fef2f2;
+      border: 1px solid #fca5a5;
+    }
+
+    .answer-text { margin-bottom: 0.5rem; white-space: pre-wrap; }
+
+    .sources-used { margin-bottom: 0.4rem; }
+    .sources-used strong { font-size: 0.78rem; text-transform: uppercase;
+                           letter-spacing: 0.04em; color: var(--pico-muted-color); }
+    .sources-used ul { margin: 0.2rem 0 0 0; padding-left: 1.1rem; }
+    .sources-used li { font-size: 0.8rem; }
+
+    details { margin-top: 0.4rem; }
+    details summary {
+      cursor: pointer;
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--pico-muted-color);
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 0.3em;
+    }
+    details summary::before { content: '▶'; font-size: 0.6rem; transition: transform 0.15s; }
+    details[open] summary::before { transform: rotate(90deg); }
+    details summary::-webkit-details-marker { display: none; }
+
+    .trace-body { font-size: 0.8rem; padding: 0.4rem 0 0 0.6rem; }
+    .trace-body div { margin-bottom: 0.2rem; }
+    .trace-body ol { margin: 0.3rem 0 0 1rem; padding: 0; }
+    .trace-body li { margin-bottom: 0.15rem; }
+
+    .task-list { margin: 0.4rem 0 0 0; display: flex; flex-direction: column; gap: 0.35rem; }
+    .task-item { border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: 0.35rem 0.5rem; font-size: 0.78rem; }
+    .task-header { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.2rem; }
+    .task-badge { display: inline-block; padding: 0.1em 0.45em; border-radius: 999px; font-size: 0.68rem; font-weight: 700; color: #fff; flex-shrink: 0; }
+    .task-badge-ok  { background: #16a34a; }
+    .task-badge-err { background: #dc2626; }
+    .task-output { white-space: pre-wrap; word-break: break-word; color: var(--pico-color); margin-top: 0.15rem; }
+    .task-error  { white-space: pre-wrap; word-break: break-word; color: #dc2626; margin-top: 0.15rem; }
+
+    /* ── Intent badge ────────────────────────────────────────────── */
+    .badge-intent {
+      display: inline-block;
+      padding: 0.15em 0.55em;
+      border-radius: 999px;
+      font-size: 0.7rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      color: #fff;
+      flex-shrink: 0;
+    }
+    .badge-PLAN    { background: #3b82f6; }
+    .badge-DIRECT  { background: #16a34a; }
+    .badge-CLARIFY { background: #f59e0b; }
+
+    .rewritten-query {
+      font-size: 0.8rem;
+      margin-top: 0.3rem;
+      padding: 0.3rem 0.5rem;
+      background: var(--pico-code-background-color, #f4f4f4);
+      border-radius: 4px;
+      word-break: break-word;
+    }
+
+    .query-sent {
+      font-size: 0.8rem;
+      margin-top: 0.3rem;
+      padding: 0.3rem 0.5rem;
+      border-radius: 4px;
+      word-break: break-word;
+    }
+    .query-sent-highlight {
+      background: #fef9c3;
+      border: 1px solid #fde68a;
+    }
+    .query-sent-normal {
+      background: var(--pico-code-background-color, #f4f4f4);
+    }
+
+    .badge-formatted {
+      display: inline-block;
+      padding: 0.12em 0.5em;
+      border-radius: 999px;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      color: #fff;
+    }
+    .badge-formatted-yes { background: #8b5cf6; }
+    .badge-formatted-no  { background: #9ca3af; }
+
+    .retry-attempt {
+      border: 1px solid var(--pico-muted-border-color);
+      border-radius: 4px;
+      margin-top: 0.3rem;
+      font-size: 0.78rem;
+    }
+    .retry-attempt summary {
+      font-size: 0.78rem;
+      font-weight: 600;
+      padding: 0.3rem 0.5rem;
+      text-transform: none;
+      letter-spacing: normal;
+    }
+    .retry-attempt-body {
+      padding: 0.3rem 0.5rem 0.4rem;
+      border-top: 1px solid var(--pico-muted-border-color);
+    }
+    .retry-attempt-body .task-output {
+      margin-top: 0.2rem;
+      font-size: 0.76rem;
+    }
+    .retry-badge-FAIL { background: #dc2626; }
+    .retry-badge-PASS { background: #16a34a; }
+
+    .step-timings-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 0.3rem;
+      font-size: 0.75rem;
+    }
+    .step-timings-table th,
+    .step-timings-table td {
+      text-align: left;
+      padding: 0.15rem 0.4rem;
+      border-bottom: 1px solid var(--pico-muted-border-color);
+    }
+    .step-timings-table th { font-weight: 600; color: var(--pico-muted-color); }
+    .step-timings-table td:last-child { text-align: right; font-family: monospace; }
+
+    /* ── Copy conversation button ────────────────────────────────── */
+    .btn-copy {
+      margin: 0;
+      font-size: 0.82rem;
+      padding: 0.3em 0.75em;
+      position: relative;
+    }
+    .btn-copy-confirm {
+      position: absolute;
+      top: -1.6em;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 0.68rem;
+      color: #16a34a;
+      font-weight: 700;
+      white-space: nowrap;
+      pointer-events: none;
+      animation: fadeout 1.5s ease forwards;
+    }
+    @keyframes fadeout {
+      0%, 60% { opacity: 1; }
+      100%    { opacity: 0; }
+    }
+
+    pre {
+      font-size: 0.72rem;
+      overflow-x: auto;
+      max-height: 180px;
+      margin: 0.4rem 0 0 0;
+      padding: 0.5rem;
+      background: var(--pico-code-background-color, #f4f4f4);
+      border-radius: 4px;
+    }
+
+    /* ── Chat input ──────────────────────────────────────────────── */
+    .chat-input-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .chat-input-row input {
+      flex: 1;
+      margin: 0;
+      font-size: 0.88rem;
+    }
+    .chat-input-row button { margin: 0; font-size: 0.88rem; white-space: nowrap; }
+
+    /* ── Spinner ─────────────────────────────────────────────────── */
+    .spinner {
+      display: inline-block;
+      width: 0.85em;
+      height: 0.85em;
+      border: 2px solid rgba(255,255,255,0.35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+      vertical-align: middle;
+      margin-right: 0.3em;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
 </head>
 <body>
-  <!-- frontend placeholder -->
+<div class="dashboard">
+
+  <!-- ══ LEFT PANEL: Data Sources ══════════════════════════════════ -->
+  <div class="panel">
+    <h2>Data Sources</h2>
+
+    <div id="sources-list">
+      <p aria-busy="true">Loading sources…</p>
+    </div>
+
+    <div class="upload-section">
+      <div class="upload-buttons">
+        <button onclick="triggerPdfUpload()">Upload PDF</button>
+        <button class="secondary" onclick="triggerTableUpload()">Upload Table</button>
+      </div>
+
+      <!-- Hidden file inputs -->
+      <input type="file" id="pdf-file-input"   accept=".pdf"          style="display:none" onchange="uploadPdf(this)" />
+      <input type="file" id="table-file-input" accept=".csv,.sqlite"  style="display:none" onchange="onTableFileSelected(this)" />
+
+      <!-- SQLite table-name step (shown only when a .sqlite file is chosen) -->
+      <div id="table-sqlite-form" style="display:none; margin-top:0.6rem;">
+        <small id="table-sqlite-filename" style="color:var(--pico-muted-color); display:block; margin-bottom:0.3rem;"></small>
+        <input type="text" id="tbl-table-name" placeholder="Table name (required for SQLite)" style="margin-bottom:0.3rem;" />
+        <div class="form-row">
+          <button onclick="submitSqliteUpload()">Upload</button>
+          <button class="secondary" onclick="cancelTableUpload()">Cancel</button>
+        </div>
+      </div>
+
+      <div id="upload-status"></div>
+    </div>
+  </div>
+
+  <!-- ══ RIGHT PANEL: Chat ═════════════════════════════════════════ -->
+  <div class="panel chat-panel">
+    <div class="chat-header">
+      <h2>Chat</h2>
+      <div class="chat-header-buttons">
+        <button class="btn-copy secondary outline" id="copy-conv-btn" onclick="copyConversation(this)">Copy Conversation</button>
+        <button class="secondary outline" onclick="newSession()">New Session</button>
+      </div>
+    </div>
+    <div id="session-label"></div>
+
+    <div id="messages"></div>
+
+    <div class="chat-input-row">
+      <input type="text" id="query-input" placeholder="Ask a question…"
+             onkeydown="onInputKey(event)" />
+      <button id="send-btn" onclick="sendMessage()">Send</button>
+    </div>
+  </div>
+
+</div><!-- .dashboard -->
+
+<script>
+/* ── Global error safety net ──────────────────────────────────────── */
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[unhandledrejection] Uncaught promise rejection:', e.reason);
+});
+
+/* ── State ────────────────────────────────────────────────────────── */
+let sessionId = crypto.randomUUID();
+let chatBusy  = false;
+
+/* ── Boot ─────────────────────────────────────────────────────────── */
+document.addEventListener('DOMContentLoaded', () => {
+  renderSessionLabel();
+  loadSources();
+});
+
+function renderSessionLabel() {
+  document.getElementById('session-label').textContent = `Session: ${sessionId}`;
+}
+
+/* ── Sources: load & render ───────────────────────────────────────── */
+async function loadSources() {
+  const container = document.getElementById('sources-list');
+  container.innerHTML = '<p aria-busy="true">Loading sources…</p>';
+  try {
+    const resp    = await fetch('/sources');
+    const sources = await expectJson(resp);
+    renderSources(sources);
+  } catch (err) {
+    container.innerHTML = `<p class="status-err">Failed to load sources: ${esc(err.message)}</p>`;
+  }
+}
+
+function renderSources(sources) {
+  const container = document.getElementById('sources-list');
+  if (!sources.length) {
+    container.innerHTML = '<p>No sources indexed yet.</p>';
+    return;
+  }
+  container.innerHTML = '';
+  sources.forEach(src => container.appendChild(buildSourceCard(src)));
+}
+
+function buildSourceCard(src) {
+  const badgeClass = { pdf: 'badge-pdf', csv: 'badge-csv', sqlite: 'badge-sqlite' }[src.type] || 'badge-csv';
+
+  // Expandable detail content
+  let detailHtml;
+  if (src.type === 'pdf') {
+    const pageStr = src.page_count != null ? `<div><strong>Pages:</strong> ${src.page_count}</div>` : '';
+    const tagStr  = (src.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('') || '—';
+    detailHtml = `${pageStr}<div><strong>Tags:</strong><br>${tagStr}</div>`;
+  } else {
+    const rows = src.row_count    != null ? `<strong>Rows (approx):</strong> ${src.row_count}` : '';
+    const cols = src.column_count != null ? `<strong>Columns:</strong> ${src.column_count}`    : '';
+    detailHtml = `<div>${[rows, cols].filter(Boolean).join(' &nbsp;·&nbsp; ')}</div>`;
+  }
+
+  const card = document.createElement('div');
+  card.className = 'source-card';
+  card.innerHTML = `
+    <div class="card-header">
+      <div class="card-title">
+        <span class="badge ${badgeClass}">${src.type.toUpperCase()}</span>
+        ${esc(src.name)}
+      </div>
+      <button class="btn-delete">Delete</button>
+    </div>
+    <div class="card-summary">${esc(src.summary)}</div>
+    <div class="card-detail">${detailHtml}</div>
+  `;
+
+  // Attach listeners via addEventListener — avoids onclick attribute quoting bugs
+  card.querySelector('.card-title').addEventListener('click', () => toggleCardDetail(card));
+  card.querySelector('.card-summary').addEventListener('click', () => toggleCardDetail(card));
+  card.querySelector('.btn-delete').addEventListener('click', (e) => {
+    e.stopPropagation();
+    deleteSource(src.source_id, src.name, card);
+  });
+
+  return card;
+}
+
+function toggleCardDetail(el) {
+  el.closest('.source-card').querySelector('.card-detail').classList.toggle('open');
+}
+
+/* ── Sources: delete ──────────────────────────────────────────────── */
+async function deleteSource(sourceId, name, cardEl) {
+  if (!confirm(`Delete "${name}" (${sourceId})?\nThis cannot be undone.`)) return;
+
+  const url = `/sources/${encodeURIComponent(sourceId)}`;
+  console.log(`[delete] DELETE ${url}`);
+
+  try {
+    const resp = await fetch(url, { method: 'DELETE' });
+    await expectJson(resp);
+    loadSources();
+  } catch (err) {
+    console.error('[delete] failed:', err);
+    // Show error inline on the card rather than swallowing it silently
+    let errEl = cardEl.querySelector('.card-delete-err');
+    if (!errEl) {
+      errEl = document.createElement('div');
+      errEl.className = 'card-delete-err status-err';
+      errEl.style.cssText = 'font-size:0.78rem; margin-top:0.3rem;';
+      cardEl.appendChild(errEl);
+    }
+    errEl.textContent = `Delete failed: ${err.message}`;
+  }
+}
+
+/* ── Upload: PDF ──────────────────────────────────────────────────── */
+function triggerPdfUpload() {
+  document.getElementById('pdf-file-input').click();
+}
+
+async function uploadPdf(input) {
+  const file = input.files[0];
+  if (!file) return;
+  input.value = '';
+
+  const status = document.getElementById('upload-status');
+  status.innerHTML = `Uploading <strong>${esc(file.name)}</strong>…`;
+  status.className = '';
+
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+
+  try {
+    const resp = await fetch('/ingest/pdf', { method: 'POST', body: fd });
+    const body = await expectJson(resp);
+    status.innerHTML = `✓ <strong>${esc(body.source_id)}</strong> — ${body.chunks_ingested} chunks ingested. ${esc(body.summary)}`;
+    status.className = 'status-ok';
+    loadSources();
+  } catch (err) {
+    status.textContent = `Upload failed: ${err.message}`;
+    status.className   = 'status-err';
+  }
+}
+
+/* ── Upload: Table ────────────────────────────────────────────────── */
+let pendingTableFile = null;
+
+function triggerTableUpload() {
+  document.getElementById('table-file-input').click();
+}
+
+function onTableFileSelected(input) {
+  const file = input.files[0];
+  input.value = '';  // reset so same file can be re-selected
+  if (!file) return;
+
+  if (file.name.toLowerCase().endsWith('.sqlite')) {
+    // Need table_name before uploading — show the confirmation step
+    pendingTableFile = file;
+    document.getElementById('table-sqlite-filename').textContent = file.name;
+    document.getElementById('tbl-table-name').value = '';
+    document.getElementById('table-sqlite-form').style.display = 'block';
+  } else {
+    // CSV — upload immediately, same pattern as PDF
+    uploadTable(file, null);
+  }
+}
+
+function submitSqliteUpload() {
+  const tableName = document.getElementById('tbl-table-name').value.trim();
+  const status    = document.getElementById('upload-status');
+  if (!tableName) {
+    status.textContent = 'Table name is required for SQLite files.';
+    status.className   = 'status-err';
+    return;
+  }
+  const file = pendingTableFile;
+  cancelTableUpload();
+  uploadTable(file, tableName);
+}
+
+function cancelTableUpload() {
+  document.getElementById('table-sqlite-form').style.display = 'none';
+  document.getElementById('tbl-table-name').value = '';
+  pendingTableFile = null;
+}
+
+async function uploadTable(file, tableName) {
+  const status = document.getElementById('upload-status');
+  status.innerHTML = `Uploading <strong>${esc(file.name)}</strong>…`;
+  status.className = '';
+
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  if (tableName) fd.append('table_name', tableName);
+
+  try {
+    const resp = await fetch('/ingest/table', { method: 'POST', body: fd });
+    const body = await expectJson(resp);
+    const colCount = Array.isArray(body.columns) ? body.columns.length : '?';
+    status.innerHTML = `✓ <strong>${esc(body.source_id)}</strong> — ${body.row_count} rows, ${colCount} columns. ${esc(body.summary)}`;
+    status.className = 'status-ok';
+    loadSources();
+  } catch (err) {
+    status.textContent = `Upload failed: ${err.message}`;
+    status.className   = 'status-err';
+  }
+}
+
+/* ── Chat ─────────────────────────────────────────────────────────── */
+function newSession() {
+  sessionId = crypto.randomUUID();
+  renderSessionLabel();
+  document.getElementById('messages').innerHTML = '';
+}
+
+function onInputKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+}
+
+async function sendMessage() {
+  if (chatBusy) return;
+  const input = document.getElementById('query-input');
+  const query = input.value.trim();
+  if (!query) return;
+
+  input.value = '';
+  setChatBusy(true);
+  appendUserBubble(query);
+
+  try {
+    const resp = await fetch('/chat', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ query, session_id: sessionId }),
+    });
+    const body = await expectJson(resp);
+    appendAssistantBubble(body, query);
+  } catch (err) {
+    appendErrorBubble(err.message);
+  } finally {
+    setChatBusy(false);
+  }
+}
+
+function setChatBusy(busy) {
+  chatBusy = busy;
+  const btn   = document.getElementById('send-btn');
+  const input = document.getElementById('query-input');
+  if (busy) {
+    btn.innerHTML  = '<span class="spinner"></span>Sending…';
+    btn.disabled   = true;
+    input.disabled = true;
+  } else {
+    btn.innerHTML  = 'Send';
+    btn.disabled   = false;
+    input.disabled = false;
+    input.focus();
+  }
+}
+
+function appendUserBubble(text) {
+  const div = document.createElement('div');
+  div.className   = 'msg msg-user';
+  div.textContent = text;
+  pushMessage(div);
+}
+
+function appendAssistantBubble(data, query) {
+  const div = document.createElement('div');
+  div.className = 'msg msg-assistant';
+
+  // (1) Answer text
+  const answer = document.createElement('div');
+  answer.className   = 'answer-text';
+  answer.textContent = data.final_answer || '(no answer)';
+  div.appendChild(answer);
+
+  // (2) Sources Used
+  const sources = data.final_sources || [];
+  if (sources.length) {
+    const srcWrap = document.createElement('div');
+    srcWrap.className = 'sources-used';
+    srcWrap.innerHTML = '<strong>Sources Used</strong>';
+    const ul = document.createElement('ul');
+    sources.forEach(s => {
+      const li = document.createElement('li');
+      li.textContent = `${s.source_id} — ${s.label}`;
+      ul.appendChild(li);
+    });
+    srcWrap.appendChild(ul);
+    div.appendChild(srcWrap);
+  }
+
+  // (3) Execution Trace (collapsible)
+  if (data.trace) {
+    const t       = data.trace;
+    const hasAudit = t.audit_verdict != null;
+    const verdict  = hasAudit ? esc(t.audit_verdict) : 'N/A';
+    const notes    = hasAudit ? esc(t.audit_notes || '—') : null;
+    const hasPlan  = t.plan != null;
+    const planHtml = hasPlan
+      ? (t.plan.map(task =>
+          `<li><strong>${esc(task.worker_type)}</strong>: ${esc(task.description)} <em>(${esc(task.source_id)})</em></li>`
+        ).join('') || '<li><em>none</em></li>')
+      : '';
+
+    const synthDraft = t.synthesizer_output || '';
+    const intent = t.chat_intent || '';
+    const rewrittenQuery = t.rewritten_query || '';
+    // Intent badge HTML
+    const intentBadge = intent
+      ? `<span class="badge-intent badge-${esc(intent)}">${esc(intent)}</span>`
+      : '';
+
+    // Show rewritten query only when it differs from the original
+    const rewrittenHtml = (rewrittenQuery && rewrittenQuery !== query)
+      ? `<div class="rewritten-query"><strong>Rewritten query:</strong> ${esc(rewrittenQuery)}</div>`
+      : '';
+
+    // Query sent to planner — hide entirely when null, highlight if differs from original
+    const querySent = t.query_sent_to_planner;
+    let querySentHtml = '';
+    if (querySent != null) {
+      const querySentDiffers = querySent !== query;
+      const querySentClass = querySentDiffers ? 'query-sent query-sent-highlight' : 'query-sent query-sent-normal';
+      querySentHtml = `<div class="${querySentClass}"><strong>Query sent to planner:</strong> ${esc(querySent)}</div>`;
+    }
+
+    // Chat formatted response badge
+    const fmtBadge = t.chat_formatted_response != null
+      ? (t.chat_formatted_response
+        ? '<span class="badge-formatted badge-formatted-yes">FORMATTED</span>'
+        : '<span class="badge-formatted badge-formatted-no">PASSTHROUGH</span>')
+      : '';
+
+    // Step timings table
+    const timings = t.step_timings || {};
+    const timingKeys = Object.keys(timings);
+    let timingsHtml = '';
+    if (timingKeys.length) {
+      const rows = timingKeys.map(k =>
+        `<tr><td>${esc(k.replace(/_ms$/, ''))}</td><td>${timings[k].toFixed(1)} ms</td></tr>`
+      ).join('');
+      timingsHtml = `
+        <div style="margin-top:0.4rem"><strong>Step Timings:</strong></div>
+        <table class="step-timings-table">
+          <thead><tr><th>Step</th><th>Time</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    const details = document.createElement('details');
+    details.innerHTML = `
+      <summary>Execution Trace &nbsp;·&nbsp; ${intentBadge ? intentBadge + ' &nbsp;·&nbsp; ' : ''}${fmtBadge ? fmtBadge + ' &nbsp;·&nbsp; ' : ''}retries: ${t.retry_count} &nbsp;·&nbsp; verdict: ${verdict}</summary>
+      <div class="trace-body">
+        ${intentBadge ? `<div><strong>Intent:</strong> ${intentBadge}</div>` : ''}
+        ${fmtBadge ? `<div><strong>Chat formatting:</strong> ${fmtBadge}</div>` : ''}
+        ${rewrittenHtml}
+        ${querySentHtml}
+        <div><strong>Retry count:</strong> ${t.retry_count}</div>
+        ${hasAudit ? `<div><strong>Audit verdict:</strong> ${verdict}</div>` : ''}
+        ${notes != null ? `<div><strong>Audit notes:</strong> ${notes}</div>` : ''}
+        ${hasPlan ? `<div><strong>Plan:</strong></div><ol>${planHtml}</ol>` : ''}
+        ${synthDraft ? `<div style="margin-top:0.6rem"><strong>Synthesizer Draft</strong> <em style="color:var(--pico-muted-color);font-size:0.75rem">(Draft before Audit)</em></div><div class="task-output" style="margin-top:0.25rem;white-space:pre-wrap">${esc(synthDraft)}</div>` : ''}
+        ${timingsHtml}
+      </div>
+    `;
+
+    // Retry history — collapsed details for each attempt
+    const retryHistory = t.retry_history || [];
+    if (retryHistory.length) {
+      const traceBodyRh = details.querySelector('.trace-body');
+      const rhHeader = document.createElement('div');
+      rhHeader.style.marginTop = '0.6rem';
+      rhHeader.innerHTML = `<strong>Retry History</strong> <em style="color:var(--pico-muted-color);font-size:0.75rem">(${retryHistory.length} attempt${retryHistory.length > 1 ? 's' : ''})</em>`;
+      traceBodyRh.appendChild(rhHeader);
+
+      retryHistory.forEach(attempt => {
+        const vBadge = `<span class="task-badge retry-badge-${esc(attempt.audit_verdict)}">${esc(attempt.audit_verdict)}</span>`;
+        const att = document.createElement('details');
+        att.className = 'retry-attempt';
+        att.innerHTML = `
+          <summary>${vBadge} Attempt ${attempt.attempt}</summary>
+          <div class="retry-attempt-body">
+            <div><strong>Verdict:</strong> ${esc(attempt.audit_verdict)}</div>
+            <div><strong>Notes:</strong> ${esc(attempt.audit_notes || '—')}</div>
+            <div style="margin-top:0.2rem"><strong>Draft:</strong></div>
+            <div class="task-output">${esc(attempt.draft_answer || '')}</div>
+          </div>
+        `;
+        traceBodyRh.appendChild(att);
+      });
+    }
+
+    // Task results — appended to .trace-body after innerHTML is set
+    const taskResults = t.task_results || {};
+    const taskIds = Object.keys(taskResults);
+    if (taskIds.length) {
+      const traceBody = details.querySelector('.trace-body');
+
+      const taskHeader = document.createElement('div');
+      taskHeader.innerHTML = '<strong>Task Results:</strong>';
+      traceBody.appendChild(taskHeader);
+
+      const taskList = document.createElement('div');
+      taskList.className = 'task-list';
+
+      taskIds.forEach(tid => {
+        const tr = taskResults[tid];
+        const badgeClass = tr.success ? 'task-badge-ok' : 'task-badge-err';
+        const badgeLabel = tr.success ? 'OK' : 'FAIL';
+
+        const item = document.createElement('div');
+        item.className = 'task-item';
+        item.innerHTML = `
+          <div class="task-header">
+            <span class="task-badge ${badgeClass}">${badgeLabel}</span>
+            <strong>${esc(tr.task_id)}</strong>
+            <span style="color:var(--pico-muted-color)">${esc(tr.worker_type)}</span>
+          </div>
+        `;
+
+        const detail = document.createElement('div');
+        if (tr.success) {
+          detail.className = 'task-output';
+          detail.textContent = tr.output || '';
+        } else {
+          detail.className = 'task-error';
+          detail.textContent = tr.error || '(unknown error)';
+        }
+        item.appendChild(detail);
+        taskList.appendChild(item);
+      });
+
+      traceBody.appendChild(taskList);
+    }
+
+    div.appendChild(details);
+  }
+
+  // (4) Raw JSON (collapsible)
+  const rawDetails = document.createElement('details');
+  rawDetails.innerHTML = `<summary>Raw JSON</summary>`;
+  const pre = document.createElement('pre');
+  pre.textContent = JSON.stringify(data, null, 2);
+  rawDetails.appendChild(pre);
+  div.appendChild(rawDetails);
+
+  pushMessage(div);
+}
+
+function appendErrorBubble(msg) {
+  const div = document.createElement('div');
+  div.className = 'msg msg-error';
+  div.innerHTML = `<span class="status-err"><strong>Error:</strong> ${esc(msg)}</span>`;
+  pushMessage(div);
+}
+
+function pushMessage(el) {
+  const container = document.getElementById('messages');
+  container.appendChild(el);
+  container.scrollTop = container.scrollHeight;
+}
+
+/* ── Copy Conversation ────────────────────────────────────────────── */
+async function copyConversation(btn) {
+  try {
+    const resp = await fetch(`/conversation/${encodeURIComponent(sessionId)}`);
+    const data = await expectJson(resp);
+    const json = JSON.stringify(data, null, 2);
+    await navigator.clipboard.writeText(json);
+    // Show brief "Copied!" confirmation
+    const tip = document.createElement('span');
+    tip.className = 'btn-copy-confirm';
+    tip.textContent = 'Copied!';
+    btn.style.position = 'relative';
+    btn.appendChild(tip);
+    setTimeout(() => tip.remove(), 1500);
+  } catch (err) {
+    console.error('[copyConversation] failed:', err);
+    alert('Failed to copy conversation: ' + err.message);
+  }
+}
+
+/* ── Helpers ──────────────────────────────────────────────────────── */
+
+/** Fetch helper: returns parsed JSON or throws with the error message. */
+async function expectJson(resp) {
+  const body = await resp.json().catch(() => ({ error: resp.statusText }));
+  if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+  return body;
+}
+
+/** Escape HTML special characters. */
+function esc(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+</script>
 </body>
 </html>

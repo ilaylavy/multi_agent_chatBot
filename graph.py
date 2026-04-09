@@ -31,12 +31,16 @@ def route_after_chat(
     state: AgentState,
 ) -> Literal["planner_node", "__end__"]:
     """
-    final_answer empty  → planner_node  (initial entry — pipeline not started yet)
-    final_answer set    → END           (answer delivered, or retry exhaustion)
+    DIRECT or CLARIFY              → END          (answer already in final_answer)
+    PLAN + final_answer empty      → planner_node (initial classify, pipeline not started)
+    PLAN + final_answer non-empty  → END          (format/deliver done, or retry exhaustion)
     """
-    if state["final_answer"]:
+    intent = state.get("chat_intent", "")
+    if intent in ("DIRECT", "CLARIFY"):
         return END
-    return "planner_node"
+    if intent == "PLAN" and not state["final_answer"]:
+        return "planner_node"
+    return END
 
 
 def route_after_audit(
@@ -99,6 +103,68 @@ compiled_graph = build_graph().compile()
 
 
 # ---------------------------------------------------------------------------
+# Routing unit tests
+# ---------------------------------------------------------------------------
+
+def test_routing():
+    """Unit tests for route_after_chat and route_after_audit."""
+
+    # Minimal fake state — only the fields the routing functions read
+    _base: dict = {
+        "chat_intent":  "",
+        "final_answer": "",
+        "audit_result": {"verdict": "PASS", "notes": ""},
+        "retry_count":  0,
+    }
+
+    # ── route_after_chat ──────────────────────────────────────────
+
+    # DIRECT → END
+    result = route_after_chat({**_base, "chat_intent": "DIRECT", "final_answer": "Hello!"})
+    assert result == END, f"DIRECT must route to END, got {result!r}"
+    print("PASS: route_after_chat — DIRECT routes to END")
+
+    # CLARIFY → END
+    result = route_after_chat({**_base, "chat_intent": "CLARIFY", "final_answer": "Which Noa?"})
+    assert result == END, f"CLARIFY must route to END, got {result!r}"
+    print("PASS: route_after_chat — CLARIFY routes to END")
+
+    # PLAN, final_answer empty → planner_node
+    result = route_after_chat({**_base, "chat_intent": "PLAN", "final_answer": ""})
+    assert result == "planner_node", f"PLAN (initial) must route to planner_node, got {result!r}"
+    print("PASS: route_after_chat — PLAN (initial entry) routes to planner_node")
+
+    # PLAN, final_answer set (format/deliver complete) → END
+    result = route_after_chat({**_base, "chat_intent": "PLAN", "final_answer": "Formatted answer."})
+    assert result == END, f"PLAN (after delivery) must route to END, got {result!r}"
+    print("PASS: route_after_chat — PLAN (after delivery) routes to END")
+
+    # Empty intent (exhaustion sets final_answer, no intent change) → END
+    result = route_after_chat({**_base, "chat_intent": "", "final_answer": "I could not verify..."})
+    assert result == END, f"Empty intent must route to END, got {result!r}"
+    print("PASS: route_after_chat — empty intent routes to END")
+
+    # ── route_after_audit ─────────────────────────────────────────
+
+    # PASS → chat_node
+    result = route_after_audit({**_base, "audit_result": {"verdict": "PASS", "notes": ""}, "retry_count": 0})
+    assert result == "chat_node", f"PASS must route to chat_node, got {result!r}"
+    print("PASS: route_after_audit — PASS routes to chat_node")
+
+    # FAIL + retries remaining → planner_node
+    result = route_after_audit({**_base, "audit_result": {"verdict": "FAIL", "notes": "bad"}, "retry_count": 1})
+    assert result == "planner_node", f"FAIL with retries must route to planner_node, got {result!r}"
+    print("PASS: route_after_audit — FAIL with retries routes to planner_node")
+
+    # FAIL + retry_count >= 3 → chat_node (graceful failure)
+    result = route_after_audit({**_base, "audit_result": {"verdict": "FAIL", "notes": "bad"}, "retry_count": 3})
+    assert result == "chat_node", f"FAIL exhausted must route to chat_node, got {result!r}"
+    print("PASS: route_after_audit — FAIL exhausted routes to chat_node")
+
+    print("\nPASS: all routing tests passed")
+
+
+# ---------------------------------------------------------------------------
 # End-to-end test — run with: python -m graph
 # ---------------------------------------------------------------------------
 
@@ -148,11 +214,37 @@ def test_graph_e2e():
         "on flights exceeding 4 hours."
     )
 
+    # chat_node now makes two LLM calls per pipeline run:
+    #   call 1 (initial entry): classify intent — must return JSON
+    #   call 2 (format+deliver): format the auditor-verified answer — returns plain text
+    chat_classify_json = json.dumps({
+        "intent":          "PLAN",
+        "rewritten_query": "Can Noa fly Business Class?",
+        "response":        None,
+    })
+
     def make_llm_mock(content: str) -> MagicMock:
         resp = MagicMock()
         resp.content = content
         llm  = MagicMock()
         llm.ainvoke = AsyncMock(return_value=resp)
+        return llm
+
+    def make_chat_llm_mock() -> MagicMock:
+        """Returns a mock that serves classify JSON on call 1, formatted text on call 2."""
+        responses = [
+            MagicMock(content=chat_classify_json),
+            MagicMock(content=chat_formatted),
+        ]
+        call_count = {"n": 0}
+
+        async def _side_effect(messages):
+            idx = call_count["n"]
+            call_count["n"] += 1
+            return responses[idx] if idx < len(responses) else responses[-1]
+
+        llm = MagicMock()
+        llm.ainvoke = _side_effect
         return llm
 
     # ── Fake worker callables for the router ─────────────────────
@@ -191,12 +283,15 @@ def test_graph_e2e():
         "original_query":       "Can Noa fly Business Class?",
         "session_id":           "test-e2e-001",
         "conversation_history": [],
+        "chat_intent":          "",
+        "rewritten_query":      "",
         "plan":                 [],
         "manifest_context":     get_manifest_index(),
         "task_results":         {},
         "sources_used":         [],
         "retrieved_chunks":     [],
         "draft_answer":         "",
+        "synthesizer_output":   "",
         "audit_result":         {"verdict": "PASS", "notes": ""},
         "retry_count":          0,
         "retry_notes":          "",
@@ -231,7 +326,7 @@ def test_graph_e2e():
             stack.enter_context(patch("agents.router.get_worker",    side_effect=mock_get_worker))
             stack.enter_context(patch("agents.synthesizer.get_llm",  return_value=make_llm_mock(synthesizer_json)))
             stack.enter_context(patch("agents.auditor.get_llm",      return_value=make_llm_mock(auditor_json)))
-            stack.enter_context(patch("agents.chat.get_llm",         return_value=make_llm_mock(chat_formatted)))
+            stack.enter_context(patch("agents.chat.get_llm",         return_value=make_chat_llm_mock()))
 
             async for update in compiled_graph.astream(
                 initial_state,
@@ -300,4 +395,6 @@ def test_graph_e2e():
 
 
 if __name__ == "__main__":
+    test_routing()
+    print()
     test_graph_e2e()

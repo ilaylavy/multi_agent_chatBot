@@ -12,10 +12,6 @@ pdfs:
   summary: The Travel Policy 2024 outlines flight class entitlements, booking rules,
     hotel allowances, per diem meal rates, and reimbursement processes based on employee
     clearance levels.
-- id: hr_handbook_v3
-  name: HR Handbook v3
-  summary: Onboarding procedures, leave policies, disciplinary process, and code of
-    conduct.
 tables:
 - id: employees
   name: Employees
@@ -23,5 +19,5 @@ tables:
     details, department, and managerial relationships.
 - id: salary_bands
   name: Salary Bands
-  summary: The table contains information about job positions, including clearance
-    level, department, and salary range.
+  summary: This table contains information about departments, their clearance levels,
+    and salary ranges.

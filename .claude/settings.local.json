@@ -7,7 +7,15 @@
       "Bash(rm data/pdfs/bad.pdf)",
       "Bash(mv env.example .env.example)",
       "Bash(rm -f __pycache__/fixtures.cpython-312.pyc)",
-      "Bash(python -m pytest tests/ -v)"
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python -m pytest tests/test_mock_suite.py::test_api_mock -v)",
+      "Bash(python -m graph)",
+      "Bash(python -m scripts.ingest_pdfs)",
+      "Bash(python -m agents.router)",
+      "Bash(python -m core.manifest)",
+      "Bash(python -m core.registry)",
+      "Bash(python -m core.state)",
+      "Bash(python:*)"
     ]
   }
 }

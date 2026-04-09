@@ -36,6 +36,11 @@ a user.
 Check all three of the following:
 
   1. COMPLETENESS — every task in the plan is addressed in the draft answer.
+     Tasks marked as depends_on prerequisites are intermediate lookup steps —
+     they exist to gather data for subsequent tasks, not to appear as conclusions
+     in the final answer. A task is considered addressed if its result was used
+     to answer a downstream task or the final question — not if it is explicitly
+     restated. Only reject if a task result was genuinely missing or fabricated.
   2. TRACEABILITY — every factual claim in the draft answer is consistent with and
      derivable from the sources listed in sources_used. You are verifying factual
      accuracy, not citation formatting. A claim passes this check if it is supported
@@ -46,14 +51,16 @@ Check all three of the following:
      evidence fails this check.
 
 Verdict rules:
-  - PASS : all three checks pass. notes should be empty.
+  - PASS : all three checks pass. notes must be a brief confirmation — e.g.
+           "All 2 tasks addressed. Claims supported by employees and travel_policy_2024 sources."
+           Never leave notes empty on PASS.
   - FAIL : one or more checks fail. notes must explain exactly what is wrong
            and what the Planner should do differently on retry.
 
 Respond with ONLY a JSON object matching this schema — no explanation, no markdown:
 {
   "verdict":       "PASS" | "FAIL",
-  "notes":         "empty string if PASS, specific actionable feedback if FAIL",
+  "notes":         "brief confirmation if PASS, specific actionable feedback if FAIL",
   "failed_checks": []
 }
 
@@ -146,20 +153,31 @@ async def auditor_node(state: AgentState) -> dict:
             f"Missing key in LLM output: {exc}\nRaw output: {response.content}"
         ) from exc
 
+    # Append to retry_history on every audit (PASS or FAIL)
+    history = list(state.get("retry_history", []))
+    history.append({
+        "attempt":       len(history) + 1,
+        "draft_answer":  view["draft_answer"],
+        "audit_verdict": verdict,
+        "audit_notes":   notes,
+    })
+
     if verdict == "PASS":
         return {
-            "audit_result":  AuditResult(verdict="PASS", notes=""),
+            "audit_result":  AuditResult(verdict="PASS", notes=notes),
             "final_answer":  view["draft_answer"],
             "final_sources": view["sources_used"],
+            "retry_history": history,
         }
 
     # FAIL — increment retry_count and write notes for the Planner
     # Routing (→ Planner or → Chat on exhaustion) is handled by graph.py,
     # not here. The Auditor only writes state.
     return {
-        "audit_result": AuditResult(verdict="FAIL", notes=notes),
-        "retry_count":  state["retry_count"] + 1,  # control logic only — not passed to LLM prompt, intentional view exception
-        "retry_notes":  notes,
+        "audit_result":  AuditResult(verdict="FAIL", notes=notes),
+        "retry_count":   state["retry_count"] + 1,  # control logic only — not passed to LLM prompt, intentional view exception
+        "retry_notes":   notes,
+        "retry_history": history,
     }
 
 
@@ -183,10 +201,11 @@ def test_auditor():
     assert "retry_notes"          not in view
     print("PASS: auditor_view returns correct fields and excludes forbidden ones")
 
-    # ── Test 2: PASS verdict — returns final_answer and final_sources
+    # ── Test 2: PASS verdict — returns final_answer, final_sources, non-empty notes
+    pass_notes = "All 2 tasks addressed. Claims supported by employees and travel_policy_2024 sources."
     pass_llm_output = json.dumps({
         "verdict":       "PASS",
-        "notes":         "",
+        "notes":         pass_notes,
         "failed_checks": [],
     })
     mock_response = MagicMock()
@@ -201,12 +220,20 @@ def test_auditor():
     assert "final_sources" in result_pass
     assert "audit_result"  in result_pass
     assert result_pass["audit_result"]["verdict"] == "PASS"
-    assert result_pass["audit_result"]["notes"]   == ""
+    assert result_pass["audit_result"]["notes"]   == pass_notes, \
+        "PASS notes must carry the LLM-provided confirmation, not be empty"
     assert result_pass["final_answer"]  == AUDITOR_STATE_PASS["draft_answer"]
     assert result_pass["final_sources"] is AUDITOR_STATE_PASS["sources_used"]
     assert "retry_count" not in result_pass, "PASS must not touch retry_count"
     assert "retry_notes" not in result_pass, "PASS must not touch retry_notes"
-    print("PASS: PASS verdict returns final_answer, final_sources, audit_result")
+    assert "retry_history" in result_pass, "PASS must include retry_history"
+    assert len(result_pass["retry_history"]) == 1
+    rh = result_pass["retry_history"][0]
+    assert rh["attempt"]       == 1
+    assert rh["audit_verdict"] == "PASS"
+    assert rh["draft_answer"]  == AUDITOR_STATE_PASS["draft_answer"]
+    assert rh["audit_notes"]   == pass_notes
+    print("PASS: PASS verdict returns final_answer, final_sources, audit_result with non-empty notes, retry_history")
 
     # ── Test 3: FAIL verdict — increments retry_count, writes retry_notes
     fail_notes = (
@@ -232,7 +259,14 @@ def test_auditor():
     assert result_fail["retry_notes"] == fail_notes
     assert "final_answer"  not in result_fail, "FAIL must not set final_answer"
     assert "final_sources" not in result_fail, "FAIL must not set final_sources"
-    print(f"PASS: FAIL verdict increments retry_count to {result_fail['retry_count']}, writes retry_notes")
+    assert "retry_history" in result_fail, "FAIL must include retry_history"
+    assert len(result_fail["retry_history"]) == 1
+    rh_fail = result_fail["retry_history"][0]
+    assert rh_fail["attempt"]       == 1
+    assert rh_fail["audit_verdict"] == "FAIL"
+    assert rh_fail["draft_answer"]  == AUDITOR_STATE_FAIL["draft_answer"]
+    assert rh_fail["audit_notes"]   == fail_notes
+    print(f"PASS: FAIL verdict increments retry_count to {result_fail['retry_count']}, writes retry_notes, retry_history")
 
     # ── Test 4: Auditor never raises regardless of verdict ─────────
     for content, label in [
@@ -259,6 +293,44 @@ def test_auditor():
         except ValueError as exc:
             assert "The answer looks good to me." in str(exc)
             print("PASS: ValueError raised with raw output on bad LLM JSON")
+
+    # ── Test 6: prerequisite task used but not restated → PASS ──────
+    # t1 looks up clearance level (intermediate), t2 uses it to find flight rules.
+    # The draft answer mentions the flight entitlement but does NOT restate
+    # "clearance level A" explicitly. The auditor must still PASS because t1's
+    # result was consumed by t2 to produce the final answer.
+    prereq_state = {
+        **AUDITOR_STATE_PASS,
+        "plan": [
+            {"task_id": "t1", "worker_type": "data_scientist",
+             "description": "Get Noa's clearance level", "source_id": "employees",
+             "depends_on": None},
+            {"task_id": "t2", "worker_type": "librarian",
+             "description": "Find flight class entitlements for the clearance level from t1",
+             "source_id": "travel_policy_2024",
+             "depends_on": "t1"},
+        ],
+        "draft_answer": "Noa is entitled to Business Class on flights over 4 hours.",
+    }
+
+    prereq_pass_notes = "All 2 tasks addressed. t1 result used by t2 to determine entitlement."
+    prereq_llm_output = json.dumps({
+        "verdict":       "PASS",
+        "notes":         prereq_pass_notes,
+        "failed_checks": [],
+    })
+    mock_response.content = prereq_llm_output
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+
+    with patch(patch_target, return_value=mock_llm):
+        result_prereq = asyncio.run(auditor_node(prereq_state))
+
+    assert result_prereq["audit_result"]["verdict"] == "PASS", \
+        "Prerequisite task used but not restated must still PASS"
+    assert "final_answer" in result_prereq, \
+        "PASS must set final_answer"
+    assert result_prereq["final_answer"] == prereq_state["draft_answer"]
+    print("PASS: prerequisite task used but not explicitly restated returns PASS verdict")
 
     print("\nPASS: all auditor tests passed")
 

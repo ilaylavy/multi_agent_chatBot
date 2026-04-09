@@ -26,9 +26,10 @@ class Message(TypedDict):
 
 class Task(TypedDict):
     task_id:     str
-    worker_type: str   # "librarian" | "data_scientist"
+    worker_type: str            # "librarian" | "data_scientist"
     description: str
     source_id:   str
+    depends_on:  Optional[str]  # task_id of prerequisite, or None if independent
 
 
 class TaskResult(TypedDict):
@@ -66,6 +67,8 @@ class AgentState(TypedDict):
     original_query:       str
     session_id:           str
     conversation_history: List[Message]
+    chat_intent:          str   # "DIRECT" | "CLARIFY" | "PLAN" | "" (empty until Chat sets it)
+    rewritten_query:      str   # context-enriched query; empty until Chat sets it
 
     # Planning
     plan:                 List[Task]
@@ -78,9 +81,11 @@ class AgentState(TypedDict):
 
     # Synthesis & Audit
     draft_answer:         str
+    synthesizer_output:   str                  # snapshot of draft before Auditor sees it
     audit_result:         AuditResult          # PASS | FAIL + notes
     retry_count:          int                  # Max 3
     retry_notes:          str
+    retry_history:        List[Dict]           # [{attempt, draft_answer, audit_verdict, audit_notes}]
 
     # Output
     final_answer:         str
@@ -93,19 +98,20 @@ class AgentState(TypedDict):
 # ---------------------------------------------------------------------------
 
 def chat_agent_view(state: AgentState) -> dict:
-    """Chat Agent sees: original_query, conversation_history, final_answer, final_sources."""
+    """Chat Agent sees: original_query, conversation_history, final_answer, final_sources, chat_intent."""
     return {
         "original_query":       state["original_query"],
         "conversation_history": state["conversation_history"],
         "final_answer":         state["final_answer"],
         "final_sources":        state["final_sources"],
+        "chat_intent":          state.get("chat_intent", ""),
     }
 
 
 def planner_view(state: AgentState) -> dict:
-    """Planner sees: original_query, manifest_context, retry_notes (on retry only)."""
+    """Planner sees: original_query (or rewritten_query when set), manifest_context, retry_notes (on retry only)."""
     view: dict = {
-        "original_query":   state["original_query"],
+        "original_query":   state.get("rewritten_query") or state["original_query"],
         "manifest_context": state["manifest_context"],
     }
     if state.get("retry_notes"):
@@ -171,6 +177,8 @@ def test_state():
         "original_query":       "What was revenue in Q3?",
         "session_id":           "test-session-001",
         "conversation_history": [{"role": "user", "content": "What was revenue in Q3?"}],
+        "chat_intent":          "",
+        "rewritten_query":      "",
         "plan":                 [{"task_id": "t1", "worker_type": "data_scientist",
                                   "description": "Look up Q3 revenue", "source_id": "financials"}],
         "manifest_context":     "financials: quarterly revenue table",
@@ -179,9 +187,11 @@ def test_state():
         "sources_used":         [{"source_id": "financials", "source_type": "csv", "label": "Financials CSV"}],
         "retrieved_chunks":     [],
         "draft_answer":         "Revenue in Q3 was $4.2M.",
+        "synthesizer_output":   "Revenue in Q3 was $4.2M.",
         "audit_result":         {"verdict": "PASS", "notes": ""},
         "retry_count":          0,
         "retry_notes":          "",
+        "retry_history":        [],
         "final_answer":         "Revenue in Q3 was $4.2M.",
         "final_sources":        [{"source_id": "financials", "source_type": "csv", "label": "Financials CSV"}],
     }
@@ -190,7 +200,7 @@ def test_state():
     manifest_detail = "financials: columns = [quarter, revenue, expenses]"
 
     assert list(chat_agent_view(fake_state).keys()) == [
-        "original_query", "conversation_history", "final_answer", "final_sources"
+        "original_query", "conversation_history", "final_answer", "final_sources", "chat_intent"
     ]
     assert "retry_notes" not in planner_view(fake_state)   # empty string → omitted
     assert list(router_view(fake_state).keys()) == ["plan"]
@@ -202,6 +212,20 @@ def test_state():
     assert list(auditor_view(fake_state).keys()) == [
         "original_query", "plan", "draft_answer", "sources_used"
     ]
+
+    # planner_view uses original_query when rewritten_query is empty
+    assert planner_view(fake_state)["original_query"] == fake_state["original_query"]
+
+    # planner_view uses rewritten_query when it is non-empty
+    fake_state["rewritten_query"] = "What was the Q3 2024 revenue figure?"
+    assert planner_view(fake_state)["original_query"] == "What was the Q3 2024 revenue figure?"
+    fake_state["rewritten_query"] = ""   # reset
+
+    # chat_agent_view exposes chat_intent
+    assert chat_agent_view(fake_state)["chat_intent"] == ""
+    fake_state["chat_intent"] = "PLAN"
+    assert chat_agent_view(fake_state)["chat_intent"] == "PLAN"
+    fake_state["chat_intent"] = ""   # reset
 
     # Verify planner includes retry_notes when present
     fake_state["retry_notes"] = "Previous answer was incomplete."
