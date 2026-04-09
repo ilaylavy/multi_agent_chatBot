@@ -55,21 +55,41 @@ pdfs:
 - id: it_security_policy
   filename: it_security_policy.pdf
   type: pdf
-  pages: 3
+  pages: 5
   sections:
-  - 'Section 1: Password Policy'
-  - 'Section 2: Data Classification'
-  - 'Section 3: Security Incident Reporting'
+  - Password Policy
+  - Data Classification
+  - Security Incident Reporting
   tags:
   - IT Security
   - Password Policy
   - Data Classification
-  - Multi-Factor Authentication
+  - MFA
   - Security Incident
   - Data Protection
   - Access Control
   - Encryption
   - Corporate Systems
+  - Incident Reporting
+- id: finance_policy_2024
+  filename: finance_policy_2024.pdf
+  type: pdf
+  pages: 4
+  sections:
+  - Expense Approval Thresholds
+  - Project Budget Limits by Department and Clearance Level
+  - Reimbursement Procedures
+  - Vendor Payment Terms
+  tags:
+  - finance policy
+  - expense approval
+  - budget limits
+  - reimbursement
+  - vendor payment
+  - clearance levels
+  - international expenses
+  - approval process
+  - payment terms
 tables:
 - id: salary_bands
   filename: salary_bands.sqlite
@@ -126,3 +146,67 @@ tables:
     description: The employee ID of the employee's manager, if applicable.
   relationships:
   - manager_id links to employee_id
+- id: training_records
+  filename: training_records.csv
+  type: csv
+  base_path: data/tables/
+  row_count_approx: 25
+  columns:
+  - name: record_id
+    type: integer
+    description: A unique identifier for each training record.
+  - name: employee_id
+    type: integer
+    description: The identifier for the employee who completed the training.
+  - name: training_name
+    type: string
+    description: The name of the training program completed by the employee.
+  - name: completion_date
+    type: string
+    description: The date on which the training was completed.
+  - name: expiry_date
+    type: string
+    description: The date on which the training certification expires.
+  - name: status
+    type: string
+    description: The current status of the training, such as 'Completed' or 'Expired'.
+  - name: score
+    type: float
+    description: The score achieved by the employee in the training program.
+  relationships:
+  - employee_id links to employees.employee_id
+- id: projects
+  filename: projects.csv
+  type: csv
+  base_path: data/tables/
+  row_count_approx: 12
+  columns:
+  - name: project_id
+    type: integer
+    description: A unique identifier for each project.
+  - name: project_name
+    type: string
+    description: The name of the project.
+  - name: department
+    type: string
+    description: The department responsible for the project.
+  - name: lead_employee_id
+    type: integer
+    description: The ID of the employee leading the project.
+  - name: budget
+    type: integer
+    description: The allocated budget for the project.
+  - name: spent
+    type: integer
+    description: The amount of money spent on the project so far.
+  - name: status
+    type: string
+    description: The current status of the project (e.g., Active, Completed).
+  - name: start_date
+    type: string
+    description: The date when the project started.
+  - name: end_date
+    type: string
+    description: The date when the project is expected to or has been completed.
+  relationships:
+  - lead_employee_id links to employees.employee_id

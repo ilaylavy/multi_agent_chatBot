@@ -68,8 +68,8 @@ INTENT OPTIONS:
 
 QUERY REWRITING (PLAN only):
   If conversation_history is non-empty and the query refers to something mentioned
-  earlier (e.g. "What about Dan?" after a question about Noa's salary), rewrite it
-  into a fully self-contained query (e.g. "What is Dan Cohen's salary?").
+  earlier (e.g. "What about [Entity B]?" after a question about [Entity A]),
+  rewrite it into a fully self-contained query (e.g. "What about Alice?" after a question about Bob's budget becomes "What is Alice's budget?").
   If the user asks multiple questions, rewrite ALL of them with context, not just
   the first. The rewritten query must contain every question from the original message.
   If no rewriting is needed, copy the original query into rewritten_query unchanged.
@@ -97,8 +97,8 @@ Rewrite this answer as a direct, concise response.
 
 Rules:
   - Lead with the key fact.
-  - Remove source attribution phrases like "per the employees table",
-    "according to salary_bands", "per Section 1 of the Travel Policy" —
+  - Remove source attribution phrases like "per the [source name]",
+    "according to [document name]", "per Section N of [document]" —
     sources are shown separately in the UI.
   - Maximum 2 sentences for simple factual answers.
   - Keep the answer concise but never drop conditions, exceptions, thresholds,
@@ -109,8 +109,8 @@ Rules:
   - Do not reveal internal system details (plans, retries, task IDs, worker names).
   - Do not hedge or add uncertainty.
   - If the answer explains that data was not found, tell the user clearly and
-    specifically what was not found — for example: "There is no employee named
-    Noa Levy in the system. Did you mean a different name?"
+    specifically what was not found — for example: "There is no [entity type]
+    named [name] in the system. Did you mean a different name?"
 """
 
 _DELIVER_USER_TEMPLATE = """\

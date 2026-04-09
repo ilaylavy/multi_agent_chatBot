@@ -33,14 +33,11 @@ pdfs:
 - id: it_security_policy
   name: It Security Policy
   summary: The IT Security Policy outlines password requirements, data classification,
-    and security incident reporting procedures.
-  contains:
-  - password policy
-  - data classification
-  - access control requirements
-  - security incident reporting
-  - breach reporting timeline
-  - contact information
+    and security incident reporting protocols.
+- id: finance_policy_2024
+  name: Finance Policy 2024
+  summary: The Finance Policy 2024 outlines expense approval thresholds, project budget
+    limits, reimbursement procedures, and vendor payment terms.
 tables:
 - id: employees
   name: Employees
@@ -58,3 +55,11 @@ tables:
     and salary ranges.
   contains:
   - salary ranges by clearance level and department
+- id: training_records
+  name: Training Records
+  summary: This table records employee training details including completion and expiry
+    dates, status, and scores.
+- id: projects
+  name: Projects
+  summary: This table contains information about various projects, including their
+    details, budget, and status.

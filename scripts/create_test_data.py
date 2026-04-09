@@ -3,10 +3,13 @@ scripts/create_test_data.py — Generate realistic test data for the RAG system.
 
 Creates:
   tests/fixtures/tables/employees.csv              — 10 employees, including Noa Levi (clearance A)
-  tests/fixtures/tables/salary_bands.sqlite        — salary_bands table, 4 levels x 3 departments
+  tests/fixtures/tables/salary_bands.sqlite        — salary_bands table, 4 levels x 4 departments
+  tests/fixtures/tables/projects.csv               — 12 projects across 4 departments
+  tests/fixtures/tables/training_records.csv       — 25 training records for all 10 employees
   tests/fixtures/pdfs/travel_policy_2024.pdf       — 4-page PDF with flight, hotel, per diem, reimbursement policy
   tests/fixtures/pdfs/hr_handbook_v3.pdf           — 4-page PDF with onboarding, leave, reviews, conduct
-  tests/fixtures/pdfs/it_security_policy.pdf       — 3-page PDF with passwords, data classification, incidents
+  tests/fixtures/pdfs/it_security_policy.pdf       — 5-page PDF with passwords, data classification, incidents, access matrix, severity
+  tests/fixtures/pdfs/finance_policy_2024.pdf      — 4-page PDF with expense thresholds, project budgets, reimbursements, vendor terms
 
 All fixtures are written to tests/fixtures/ so they are committed to git.
 Real (user-supplied) data goes in data/, which is gitignored.
@@ -116,13 +119,105 @@ print(f"  Level A / Engineering range: $150,000 – $220,000")
 
 
 # ---------------------------------------------------------------------------
+# 3. projects.csv
+# ---------------------------------------------------------------------------
+
+PROJECTS = [
+    # (project_id, project_name, department, lead_employee_id, budget, spent, status, start_date, end_date)
+    (1,  "Cloud Migration Phase 1",    "Engineering", 1,  120000, 115000, "Completed", "2024-01-15", "2024-06-30"),
+    (2,  "Annual Audit Automation",    "Finance",     5,   45000,  48000, "Completed", "2024-02-01", "2024-05-15"),
+    (3,  "Employee Portal Redesign",   "HR",          3,   60000,  35000, "Active",    "2024-06-01", ""),
+    (4,  "CRM Integration",           "Sales",        5,   80000,  82500, "Completed", "2024-01-20", "2024-07-10"),
+    (5,  "Cloud Migration Phase 2",    "Engineering", 10,  95000,  62000, "Active",    "2024-07-01", ""),
+    (6,  "Compliance Training System", "HR",          3,   30000,  28000, "Completed", "2024-03-10", "2024-08-20"),
+    (7,  "Revenue Dashboard",         "Finance",      5,   55000,  12000, "On Hold",   "2024-08-01", ""),
+    (8,  "API Gateway Upgrade",       "Engineering",  7,   70000,  70500, "Completed", "2024-04-01", "2024-09-15"),
+    (9,  "Lead Scoring Model",        "Sales",        5,   40000,  18000, "Active",    "2024-09-01", ""),
+    (10, "Data Lake Setup",           "Engineering",  1,  150000,  45000, "On Hold",   "2024-10-01", ""),
+    (11, "Benefits Platform Migration","HR",          3,   35000,  34000, "Completed", "2024-02-15", "2024-06-01"),
+    (12, "Sales Forecasting Tool",    "Sales",        5,   65000,  63000, "Completed", "2024-03-01", "2024-08-30"),
+]
+
+PROJECTS_CSV_PATH = TABLES_DIR / "projects.csv"
+with open(PROJECTS_CSV_PATH, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["project_id", "project_name", "department", "lead_employee_id",
+                     "budget", "spent", "status", "start_date", "end_date"])
+    writer.writerows(PROJECTS)
+
+active_count   = sum(1 for p in PROJECTS if p[6] == "Active")
+on_hold_count  = sum(1 for p in PROJECTS if p[6] == "On Hold")
+over_budget    = sum(1 for p in PROJECTS if p[5] > p[4])
+print(f"\nCreated {PROJECTS_CSV_PATH}")
+print(f"  Rows        : {len(PROJECTS)}")
+print(f"  Active: {active_count}, On Hold: {on_hold_count}, Completed: {len(PROJECTS) - active_count - on_hold_count}")
+print(f"  Over budget : {over_budget}")
+print(f"  Sample rows:")
+for row in PROJECTS[:3]:
+    print(f"    {row}")
+
+
+# ---------------------------------------------------------------------------
+# 4. training_records.csv
+# ---------------------------------------------------------------------------
+
+TRAINING_RECORDS = [
+    # (record_id, employee_id, training_name, completion_date, expiry_date, status, score)
+    (1,  1,  "Security Awareness",      "2024-01-10", "2025-01-10", "Completed",   92),
+    (2,  1,  "Data Privacy",            "2024-03-15", "2025-03-15", "Completed",   88),
+    (3,  1,  "Leadership Fundamentals", "2024-06-20", "2025-06-20", "Completed",   95),
+    (4,  2,  "Security Awareness",      "2023-11-05", "2024-11-05", "Expired",     78),
+    (5,  2,  "Financial Compliance",    "2024-04-12", "2025-04-12", "Completed",   85),
+    (6,  3,  "Security Awareness",      "2024-02-18", "2025-02-18", "Completed",   90),
+    (7,  3,  "Data Privacy",            "2024-05-22", "2025-05-22", "Completed",   87),
+    (8,  3,  "Leadership Fundamentals", "",           "",           "In Progress", ""),
+    (9,  4,  "Security Awareness",      "2024-01-25", "2025-01-25", "Completed",   72),
+    (10, 4,  "Emergency Procedures",    "2023-08-10", "2024-08-10", "Expired",     65),
+    (11, 5,  "Security Awareness",      "2024-03-01", "2025-03-01", "Completed",   91),
+    (12, 5,  "Financial Compliance",    "2024-07-14", "2025-07-14", "Completed",   89),
+    (13, 5,  "Leadership Fundamentals", "2024-09-30", "2025-09-30", "Completed",   94),
+    (14, 6,  "Security Awareness",      "2024-04-05", "2025-04-05", "Completed",   70),
+    (15, 6,  "Data Privacy",            "2023-06-15", "2024-06-15", "Expired",     68),
+    (16, 7,  "Security Awareness",      "2024-02-28", "2025-02-28", "Completed",   83),
+    (17, 7,  "Emergency Procedures",    "2024-08-20", "2025-08-20", "Completed",   77),
+    (18, 8,  "Security Awareness",      "2024-05-10", "2025-05-10", "Completed",   80),
+    (19, 8,  "Data Privacy",            "",           "",           "In Progress", ""),
+    (20, 8,  "Emergency Procedures",    "2024-06-01", "2025-06-01", "Completed",   75),
+    (21, 9,  "Security Awareness",      "2024-03-20", "2025-03-20", "Completed",   69),
+    (22, 9,  "Financial Compliance",    "2023-09-25", "2024-09-25", "Expired",     62),
+    (23, 10, "Security Awareness",      "2024-01-05", "2025-01-05", "Completed",   96),
+    (24, 10, "Leadership Fundamentals", "2024-04-18", "2025-04-18", "Completed",   98),
+    (25, 10, "Data Privacy",            "2024-07-30", "2025-07-30", "Completed",   93),
+]
+
+TRAINING_CSV_PATH = TABLES_DIR / "training_records.csv"
+with open(TRAINING_CSV_PATH, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["record_id", "employee_id", "training_name", "completion_date",
+                     "expiry_date", "status", "score"])
+    writer.writerows(TRAINING_RECORDS)
+
+expired_count     = sum(1 for r in TRAINING_RECORDS if r[5] == "Expired")
+in_progress_count = sum(1 for r in TRAINING_RECORDS if r[5] == "In Progress")
+employees_covered = len({r[1] for r in TRAINING_RECORDS})
+print(f"\nCreated {TRAINING_CSV_PATH}")
+print(f"  Rows             : {len(TRAINING_RECORDS)}")
+print(f"  Employees covered: {employees_covered}")
+print(f"  Expired: {expired_count}, In Progress: {in_progress_count}, Completed: {len(TRAINING_RECORDS) - expired_count - in_progress_count}")
+print(f"  Sample rows:")
+for row in TRAINING_RECORDS[:3]:
+    print(f"    {row}")
+
+
+# ---------------------------------------------------------------------------
 # PDF helper
 # ---------------------------------------------------------------------------
 
+from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
-from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
+from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 styles    = getSampleStyleSheet()
 heading   = styles["Heading1"]
@@ -679,13 +774,275 @@ IT_PAGE_3 = [
     ),
 ]
 
-_build_pdf(IT_PDF_PATH, [IT_PAGE_1, IT_PAGE_2, IT_PAGE_3])
+IT_PAGE_4 = [
+    Paragraph("Section 4: Data Access Matrix", heading2),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "The following matrix defines data access permissions by clearance level. "
+        "Access is enforced at the system level and audited quarterly.",
+        body,
+    ),
+    Spacer(1, 0.4 * cm),
+    Table(
+        [
+            ["Data Category",         "Clearance A",  "Clearance B",  "Clearance C",  "Clearance D"],
+            ["Employee Personal Data", "Full Access",  "Read Only",    "No Access",    "No Access"],
+            ["Financial Records",      "Full Access",  "Full Access",  "Read Only",    "No Access"],
+            ["Customer Data",          "Full Access",  "Full Access",  "Full Access",  "Read Only"],
+            ["Internal Documents",     "Full Access",  "Full Access",  "Full Access",  "Full Access"],
+            ["Public Data",            "Full Access",  "Full Access",  "Full Access",  "Full Access"],
+        ],
+        colWidths=[3.5 * cm, 2.8 * cm, 2.8 * cm, 2.8 * cm, 2.8 * cm],
+        style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#4472C4")),
+            ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",   (0, 0), (-1, -1), 8),
+            ("ALIGN",      (1, 0), (-1, -1), "CENTER"),
+            ("GRID",       (0, 0), (-1, -1), 0.5, colors.grey),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#D9E2F3")]),
+            ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]),
+    ),
+    Spacer(1, 0.4 * cm),
+    Paragraph(
+        "Access requests outside of the defined matrix must be submitted to the "
+        "IT Security team with justification and approved by the data owner. "
+        "Temporary elevated access expires after 30 days unless renewed.",
+        body,
+    ),
+]
+
+IT_PAGE_5 = [
+    Paragraph("Section 5: Incident Severity Classification", heading2),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "All security incidents are classified by severity level. The severity "
+        "determines the response time and escalation path.",
+        body,
+    ),
+    Spacer(1, 0.4 * cm),
+    Table(
+        [
+            ["Severity",  "Description",           "Response Time", "Escalation"],
+            ["Critical",  "System-wide breach",    "30 minutes",    "CISO + Legal"],
+            ["High",      "Department breach",      "2 hours",       "IT Security Lead"],
+            ["Medium",    "Single user compromise", "24 hours",      "IT Security team"],
+            ["Low",       "Failed access attempt",  "72 hours",      "IT Security team"],
+        ],
+        colWidths=[2.5 * cm, 4.5 * cm, 3.0 * cm, 4.0 * cm],
+        style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#C00000")),
+            ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",   (0, 0), (-1, -1), 8),
+            ("ALIGN",      (0, 0), (-1, -1), "LEFT"),
+            ("GRID",       (0, 0), (-1, -1), 0.5, colors.grey),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#FCE4EC")]),
+            ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]),
+    ),
+    Spacer(1, 0.4 * cm),
+    Paragraph(
+        "Critical and High incidents trigger automatic notification to the executive "
+        "team. All incidents require a written incident report within 48 hours of "
+        "resolution.",
+        body,
+    ),
+]
+
+_build_pdf(IT_PDF_PATH, [IT_PAGE_1, IT_PAGE_2, IT_PAGE_3, IT_PAGE_4, IT_PAGE_5])
 
 it_pages = _pdf_page_count(IT_PDF_PATH)
 it_size  = IT_PDF_PATH.stat().st_size
 print(f"\nCreated {IT_PDF_PATH}")
 print(f"  Pages : {it_pages}  |  Size : {it_size:,} bytes")
-assert it_pages == 3, f"Expected 3 pages, got {it_pages}"
+assert it_pages == 5, f"Expected 5 pages, got {it_pages}"
+
+
+# ---------------------------------------------------------------------------
+# 6. finance_policy_2024.pdf  (4 pages)
+# ---------------------------------------------------------------------------
+
+FINANCE_PDF_PATH = FIXTURE_PDFS_DIR / "finance_policy_2024.pdf"
+
+FINANCE_PAGE_1 = [
+    Paragraph("Finance Policy 2024", heading),
+    Spacer(1, 0.4 * cm),
+    Paragraph("Section 1: Expense Approval Thresholds", heading2),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "All employee expenses must follow the approval thresholds defined below. "
+        "The required approvers depend on the expense amount. Receipts and turnaround "
+        "times are as specified.",
+        body,
+    ),
+    Spacer(1, 0.4 * cm),
+    Table(
+        [
+            ["Amount Range",  "Required Approvers",                   "Receipt Required", "Turnaround Time"],
+            ["Up to $100",    "Self-approval",                        "No",               "Immediate"],
+            ["$100 - $500",   "Manager approval",                     "Yes",              "3 business days"],
+            ["$500 - $2,000", "Manager + Department Head",            "Yes",              "5 business days"],
+            ["Over $2,000",   "Manager + Department Head + Finance",  "Yes",              "10 business days"],
+        ],
+        colWidths=[3.0 * cm, 5.5 * cm, 3.0 * cm, 3.5 * cm],
+        style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2E7D32")),
+            ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",   (0, 0), (-1, -1), 8),
+            ("ALIGN",      (0, 0), (-1, -1), "LEFT"),
+            ("GRID",       (0, 0), (-1, -1), 0.5, colors.grey),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#E8F5E9")]),
+            ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]),
+    ),
+    Spacer(1, 0.4 * cm),
+    Paragraph(
+        "Expenses submitted without the required approvals will be returned to the "
+        "employee and must be resubmitted through the correct approval chain.",
+        body,
+    ),
+]
+
+FINANCE_PAGE_2 = [
+    Paragraph("Section 2: Project Budget Limits by Department and Clearance Level", heading2),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "Each employee's monthly project budget limit is determined by their department "
+        "and clearance level. Budgets may not be pooled or transferred between employees "
+        "without Finance approval.",
+        body,
+    ),
+    Spacer(1, 0.4 * cm),
+    Table(
+        [
+            ["Department",   "Clearance A", "Clearance B", "Clearance C", "Clearance D"],
+            ["Engineering",  "$50,000",     "$30,000",     "$15,000",     "$5,000"],
+            ["Finance",      "$40,000",     "$25,000",     "$10,000",     "$3,000"],
+            ["HR",           "$20,000",     "$12,000",     "$6,000",      "$2,000"],
+            ["Sales",        "$45,000",     "$28,000",     "$14,000",     "$4,000"],
+        ],
+        colWidths=[3.0 * cm, 3.0 * cm, 3.0 * cm, 3.0 * cm, 3.0 * cm],
+        style=TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1565C0")),
+            ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",   (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",   (0, 0), (-1, -1), 8),
+            ("ALIGN",      (1, 0), (-1, -1), "CENTER"),
+            ("GRID",       (0, 0), (-1, -1), 0.5, colors.grey),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#BBDEFB")]),
+            ("VALIGN",     (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]),
+    ),
+    Spacer(1, 0.4 * cm),
+    Paragraph(
+        "Budget overruns exceeding 10% require written justification and approval from "
+        "the department head. Overruns exceeding 25% require additional approval from "
+        "the Finance department.",
+        body,
+    ),
+]
+
+FINANCE_PAGE_3 = [
+    Paragraph("Section 3: Reimbursement Procedures", heading2),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "All reimbursement claims must be submitted through the corporate expense portal "
+        "within 30 days of the expense being incurred. Late submissions require written "
+        "justification from the employee's manager.",
+        body,
+    ),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "<b>Cross-References:</b> For travel expense limits, refer to Travel Policy 2024 "
+        "Section 3. For hotel nightly allowances, refer to Travel Policy 2024 Section 3. "
+        "For flight class entitlements, refer to Travel Policy 2024 Section 1.",
+        body,
+    ),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "<b>Processing Time:</b> Reimbursements are processed within 10 business days "
+        "of approved submission. Payments are deposited directly into the employee's "
+        "primary bank account on file.",
+        body,
+    ),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "<b>International Expenses:</b> All international expenses require pre-approval "
+        "from the Finance department regardless of amount. Currency conversion is applied "
+        "at the exchange rate on the date of the transaction. Employees must provide "
+        "original receipts in the local currency.",
+        body,
+    ),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "<b>Disputed Claims:</b> Employees may dispute a rejected or partially approved "
+        "reimbursement by submitting a formal appeal through the expense portal within "
+        "5 business days of the rejection notification.",
+        body,
+    ),
+]
+
+FINANCE_PAGE_4 = [
+    Paragraph("Section 4: Vendor Payment Terms", heading2),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "All vendor invoices are processed according to the payment terms agreed in the "
+        "vendor contract. Standard and preferred vendor terms are defined below.",
+        body,
+    ),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "<b>Standard Vendors:</b> Net 30 payment terms. Invoices are due within 30 "
+        "calendar days of receipt. Early payment discounts offered by vendors may be "
+        "accepted if the discount exceeds 2% and the invoice amount exceeds $1,000.",
+        body,
+    ),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "<b>Preferred Vendors:</b> Net 15 payment terms. Preferred vendor status is "
+        "granted to vendors with a minimum 2-year relationship and annual spend exceeding "
+        "$50,000. Preferred vendors receive priority invoice processing.",
+        body,
+    ),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "<b>Small Purchases:</b> Amounts under $50 are paid immediately upon receipt "
+        "of goods or services. No purchase order is required for amounts under $50.",
+        body,
+    ),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "<b>Late Payment Penalty:</b> A penalty of 1.5% per month is applied to any "
+        "invoice not paid within the agreed payment terms. The penalty is calculated on "
+        "the outstanding balance from the due date until full payment is received.",
+        body,
+    ),
+    Spacer(1, 0.3 * cm),
+    Paragraph(
+        "All vendor disputes must be escalated to the Finance department within 10 "
+        "business days of the disputed invoice date.",
+        body,
+    ),
+]
+
+_build_pdf(FINANCE_PDF_PATH, [FINANCE_PAGE_1, FINANCE_PAGE_2, FINANCE_PAGE_3, FINANCE_PAGE_4])
+
+finance_pages = _pdf_page_count(FINANCE_PDF_PATH)
+finance_size  = FINANCE_PDF_PATH.stat().st_size
+print(f"\nCreated {FINANCE_PDF_PATH}")
+print(f"  Pages : {finance_pages}  |  Size : {finance_size:,} bytes")
+assert finance_pages == 4, f"Expected 4 pages, got {finance_pages}"
 
 
 # ---------------------------------------------------------------------------
@@ -693,6 +1050,7 @@ assert it_pages == 3, f"Expected 3 pages, got {it_pages}"
 # ---------------------------------------------------------------------------
 
 print("\nAll test data created successfully.")
-print(f"  travel_policy_2024.pdf : {travel_pages} pages, {travel_size:,} bytes")
-print(f"  hr_handbook_v3.pdf     : {hr_pages} pages, {hr_size:,} bytes")
-print(f"  it_security_policy.pdf : {it_pages} pages, {it_size:,} bytes")
+print(f"  travel_policy_2024.pdf   : {travel_pages} pages, {travel_size:,} bytes")
+print(f"  hr_handbook_v3.pdf       : {hr_pages} pages, {hr_size:,} bytes")
+print(f"  it_security_policy.pdf   : {it_pages} pages, {it_size:,} bytes")
+print(f"  finance_policy_2024.pdf  : {finance_pages} pages, {finance_size:,} bytes")

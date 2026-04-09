@@ -15,7 +15,8 @@
       "Bash(python -m core.manifest)",
       "Bash(python -m core.registry)",
       "Bash(python -m core.state)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(echo \"---EXIT: $?\")"
     ]
   }
 }

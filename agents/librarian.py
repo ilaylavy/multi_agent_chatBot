@@ -95,6 +95,18 @@ def librarian_view(state: AgentState, task: Task, manifest_detail: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+def clean_search_query(description: str) -> str:
+    """
+    Strip the prerequisite JSON block from an enriched task description.
+    Returns only the semantic text portion for use as a vector search query.
+    """
+    return description.split("\n\n[Prerequisite result")[0].strip()
+
+
+# ---------------------------------------------------------------------------
 # Worker callable
 # ---------------------------------------------------------------------------
 
@@ -120,14 +132,15 @@ async def librarian_worker(
     view = librarian_view(state, task, manifest_detail)
 
     # ── Retrieval ────────────────────────────────────────────────
+    search_query = clean_search_query(task["description"])
     chunks: List[Chunk] = await retriever.search(
-        query=task["description"],
+        query=search_query,
         source_id=task["source_id"],
         top_k=_INITIAL_FETCH,
     )
 
     # ── Rerank — FlashRank when enabled, passthrough when disabled ─
-    chunks = get_reranker().rerank(query=task["description"], chunks=chunks)
+    chunks = get_reranker().rerank(query=search_query, chunks=chunks)
     chunks = chunks[:_FINAL_TOP_K]
 
     # ── Build chunks block for LLM prompt ────────────────────────
@@ -326,6 +339,53 @@ def test_librarian():
         mock_get.assert_called_once()
         assert isinstance(mock_get.return_value, PassthroughRanker)
     print("PASS: PassthroughRanker used when reranker is disabled")
+
+    # ── Test 8: enriched description — clean query to retriever, full to LLM ──
+    enriched_desc = (
+        "Find entitlements for the retrieved property"
+        '\n\n[Prerequisite result from t1]: {"result_value": "X"}'
+    )
+    enriched_task: Task = {**fake_task, "description": enriched_desc}
+
+    # Verify clean_search_query strips the prerequisite block
+    cleaned = clean_search_query(enriched_desc)
+    assert cleaned == "Find entitlements for the retrieved property", \
+        f"clean_search_query must strip prerequisite block, got: {cleaned}"
+    assert "[Prerequisite result" not in cleaned
+
+    # Track what the retriever and LLM receive
+    mock_retriever.search = AsyncMock(return_value=fake_chunks)
+    captured_llm_messages: list = []
+
+    async def capture_llm(messages):
+        captured_llm_messages.extend(messages)
+        return mock_response_ok
+
+    mock_llm.ainvoke = capture_llm
+
+    with patch(patch_target, return_value=mock_llm), \
+         patch("agents.librarian.get_manifest_detail", return_value="fake manifest detail"), \
+         patch(reranker_patch_target, return_value=PassthroughRanker()):
+        asyncio.run(librarian_worker(fake_state, enriched_task, retriever=mock_retriever))
+
+    # Retriever must receive the clean query (no JSON blob)
+    retriever_query = mock_retriever.search.call_args[1]["query"]
+    assert retriever_query == "Find entitlements for the retrieved property", \
+        f"Retriever must receive clean query, got: {retriever_query}"
+    assert "[Prerequisite result" not in retriever_query
+
+    # LLM prompt must contain the full enriched description (with prerequisite)
+    llm_user_msg = next(m["content"] for m in captured_llm_messages if m["role"] == "user")
+    assert "[Prerequisite result from t1]" in llm_user_msg, \
+        "LLM prompt must include prerequisite context"
+    assert '{"result_value": "X"}' in llm_user_msg, \
+        "LLM prompt must include prerequisite output"
+    print("PASS: enriched task sends clean query to retriever, full description to LLM")
+
+    # ── Verify clean_search_query is a no-op for plain descriptions ──
+    assert clean_search_query("simple description") == "simple description"
+    assert clean_search_query("") == ""
+    print("PASS: clean_search_query is a no-op for plain descriptions")
 
     print("\nPASS: all librarian tests passed")
 

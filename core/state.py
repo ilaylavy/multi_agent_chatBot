@@ -160,10 +160,11 @@ def synthesizer_view(state: AgentState) -> dict:
 
 
 def auditor_view(state: AgentState) -> dict:
-    """Auditor sees: original_query, plan, draft_answer, sources_used."""
+    """Auditor sees: original_query, plan, task_results, draft_answer, sources_used."""
     return {
         "original_query": state["original_query"],
         "plan":           state["plan"],
+        "task_results":   state["task_results"],
         "draft_answer":   state["draft_answer"],
         "sources_used":   state["sources_used"],
     }
@@ -212,7 +213,7 @@ def test_state():
         "original_query", "plan", "task_results", "sources_used"
     ]
     assert list(auditor_view(fake_state).keys()) == [
-        "original_query", "plan", "draft_answer", "sources_used"
+        "original_query", "plan", "task_results", "draft_answer", "sources_used"
     ]
 
     # planner_view uses original_query when rewritten_query is empty
