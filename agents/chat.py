@@ -55,31 +55,33 @@ MAX_CLASSIFICATION_HISTORY: int = _chat_cfg.get("max_classification_history", 6)
 # ---------------------------------------------------------------------------
 
 _CLASSIFY_SYSTEM_PROMPT = """\
-You are a conversation router for a multi-agent question-answering system.
-Classify the user's intent and, when needed, generate a response or rewrite the query.
+You are a router. Your only job is to classify the user's intent so the right
+downstream agent handles it. You never solve problems, evaluate feasibility,
+or reason about what data exists.
 
-INTENT OPTIONS:
-  DIRECT  — greeting, small talk, or a meta question about the system's capabilities.
-            Generate a friendly, concise response. No data lookup needed.
-  CLARIFY — the query is ambiguous, incomplete, or references something unclear.
-            Ask one brief, specific clarifying question.
-  PLAN    — the query requires looking up data from documents or structured tables.
-            This is the default for any substantive factual question.
+Three intents:
 
-QUERY REWRITING (PLAN only):
-  If conversation_history is non-empty and the query refers to something mentioned
-  earlier (e.g. "What about [Entity B]?" after a question about [Entity A]),
-  rewrite it into a fully self-contained query (e.g. "What about Alice?" after a question about Bob's budget becomes "What is Alice's budget?").
-  If the user asks multiple questions, rewrite ALL of them with context, not just
-  the first. The rewritten query must contain every question from the original message.
-  If no rewriting is needed, copy the original query into rewritten_query unchanged.
+DIRECT — greetings, small talk, meta questions about the system. Reply directly.
 
-Respond with ONLY a JSON object — no explanation, no markdown:
-{
-  "intent":          "DIRECT" | "CLARIFY" | "PLAN",
-  "rewritten_query": "<self-contained query, or original if unchanged>",
-  "response":        "<your response for DIRECT or CLARIFY; null for PLAN>"
-}
+PLAN — anything that asks for information, facts, or analysis. This is the
+strong default. If in doubt, choose PLAN. Never judge whether a query is
+answerable — that is the Planner's job, not yours.
+
+CLARIFY — use only when the user's intent itself is unclear, or when a
+critical identifier is missing from the query and you cannot construct a
+meaningful search without it (e.g. the user asks about "my" data but has not
+provided their name, or asks to compare two things without specifying what
+they are). Ask exactly one short question. Never clarify about data sources,
+data availability, or how something might be defined in the system.
+
+Query rewriting (PLAN only):
+If conversation history exists and the current query references prior
+context, rewrite it as a fully self-contained question. Preserve every
+sub-question from the original. If no rewriting is needed, copy the
+original query unchanged.
+
+Respond with ONLY a JSON object:
+{"intent": "DIRECT"|"CLARIFY"|"PLAN", "rewritten_query": "...", "response": "...or null for PLAN"}
 """
 
 _CLASSIFY_USER_TEMPLATE = """\
@@ -105,7 +107,12 @@ Rules:
     or approval requirements — these are critical for policy questions. If the
     answer contains a rule with an exception such as "permitted only when X" or
     "requires approval for Y", always include that exception in the final answer.
-  - Do not add information not in the answer.
+  - Do not add information not in the answer. Never add advice, suggestions, or
+    recommendations not directly stated in the answer — do not say "consult your
+    department" or "contact the finance team" unless the source explicitly says so.
+  - Never refer to source documents by name in the formatted answer — the UI shows
+    sources separately. Do not say "as specified in the Travel Policy 2024" or
+    "according to the HR Handbook".
   - Do not reveal internal system details (plans, retries, task IDs, worker names).
   - Do not hedge or add uncertainty.
   - If the answer explains that data was not found, tell the user clearly and
@@ -191,7 +198,7 @@ def _append_messages(
 import re
 
 _GREETING_PATTERN = re.compile(
-    r"^(hi|hello|hey|thanks|thank you|bye|goodbye|ok|okay|yes|no)[\s!.,?]*$",
+    r"^(hi|hello|hey|thanks|thank you|bye|goodbye)[\s!.,?]*$",
     re.IGNORECASE,
 )
 
@@ -203,10 +210,6 @@ _CANNED_RESPONSES: dict[str, str] = {
     "thank you": "You're welcome! Let me know if you have more questions.",
     "bye":       "Goodbye! Feel free to start a new session any time.",
     "goodbye":   "Goodbye! Feel free to start a new session any time.",
-    "ok":        "Got it. Let me know if there's anything else.",
-    "okay":      "Got it. Let me know if there's anything else.",
-    "yes":       "Got it. What would you like to know?",
-    "no":        "Understood. Let me know if you need anything else.",
 }
 
 _MAX_FAST_LENGTH = 20
@@ -741,7 +744,7 @@ def test_chat():
     mock_llm_fast = MagicMock()
     mock_llm_fast.ainvoke = AsyncMock()
 
-    for greeting in ("hi", "hello", "thanks", "Hey!", "bye", "ok", "yes", "no"):
+    for greeting in ("hi", "hello", "thanks", "Hey!", "bye"):
         fast_state = {**base_state, "original_query": greeting}
         with patch(patch_target, return_value=mock_llm_fast):
             result_fast = asyncio.run(chat_node(fast_state))

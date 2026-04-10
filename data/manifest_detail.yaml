@@ -19,39 +19,23 @@ pdfs:
   tags:
   - travel policy
   - flight entitlements
-  - booking rules
   - hotel allowances
   - per diem rates
   - expense reimbursement
-  - clearance levels
-  - corporate travel
-  - employee entitlements
 - id: hr_handbook_v3
   filename: hr_handbook_v3.pdf
   type: pdf
   pages: 4
   sections:
-  - 'Chapter 1: Onboarding'
-  - First Week Checklist
-  - Required Documents
-  - IT Setup
-  - 'Chapter 2: Leave Policy'
-  - Annual Leave
-  - Sick Leave
-  - Parental Leave
-  - 'Chapter 3: Performance Reviews'
-  - Rating Scale
+  - Onboarding
+  - Leave Policy
+  - Performance Reviews
   tags:
-  - onboarding
-  - leave policy
+  - HR policies
+  - onboarding process
+  - leave entitlements
   - performance reviews
-  - HR procedures
-  - employee handbook
-  - compliance training
-  - IT setup
-  - annual leave
-  - sick leave
-  - parental leave
+  - employee compliance
 - id: it_security_policy
   filename: it_security_policy.pdf
   type: pdf
@@ -61,16 +45,11 @@ pdfs:
   - Data Classification
   - Security Incident Reporting
   tags:
-  - IT Security
-  - Password Policy
-  - Data Classification
-  - MFA
-  - Security Incident
-  - Data Protection
-  - Access Control
-  - Encryption
-  - Corporate Systems
-  - Incident Reporting
+  - IT security
+  - password policy
+  - data classification
+  - multi-factor authentication
+  - security incident reporting
 - id: finance_policy_2024
   filename: finance_policy_2024.pdf
   type: pdf
@@ -86,10 +65,6 @@ pdfs:
   - budget limits
   - reimbursement
   - vendor payment
-  - clearance levels
-  - international expenses
-  - approval process
-  - payment terms
 tables:
 - id: salary_bands
   filename: salary_bands.sqlite
