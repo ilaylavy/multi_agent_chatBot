@@ -50,7 +50,10 @@ _CATALOG_SYSTEM_PROMPT = (
     "Return JSON only: "
     '{ "summary": "one sentence describing the table", '
     '"column_descriptions": {"col_name": "description"}, '
-    '"relationships": ["list of foreign key suggestions, e.g. col links to other_table.col"] }'
+    '"relationships": ["list of foreign key suggestions, e.g. col links to other_table.col"], '
+    '"contains": ["5-10 topic phrases describing what data this table holds — '
+    "written as search-friendly phrases a query planner would use to decide relevance, "
+    "e.g. 'employee names', 'department assignments', 'hire dates'\" }"
 )
 
 
@@ -228,6 +231,13 @@ async def ingest_table(
     col_descs     = catalog.get("column_descriptions", {})
     relationships = catalog.get("relationships", [])
 
+    # contains: use LLM response, or derive from column descriptions as fallback
+    contains = catalog.get("contains")
+    if not contains:
+        contains = [
+            desc for desc in col_descs.values() if desc
+        ] or [col["name"] for col in columns]
+
     # Merge LLM-generated descriptions into the columns list
     for col in columns:
         col["description"] = col_descs.get(col["name"], "")
@@ -236,9 +246,10 @@ async def ingest_table(
     name = file_path.stem.replace("_", " ").title()
 
     index_entry: dict = {
-        "id":      source_id,
-        "name":    name,
-        "summary": summary,
+        "id":       source_id,
+        "name":     name,
+        "summary":  summary,
+        "contains": contains,
     }
     detail_entry: dict = {
         "id":              source_id,

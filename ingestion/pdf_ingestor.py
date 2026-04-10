@@ -43,7 +43,11 @@ _CATALOG_SYSTEM_PROMPT = (
     "Return JSON only: "
     '{ "summary": "one sentence", '
     '"sections": ["list of main headings"], '
-    '"tags": ["5-10 keywords"] }'
+    '"tags": ["5-10 keywords"], '
+    '"contains": ["5-10 topic phrases describing what types of information, '
+    "rules, policies, or data this document contains — written as search-friendly "
+    "phrases a query planner would use to decide relevance, e.g. "
+    "'expense approval thresholds', 'vendor payment terms'\" }"
 )
 
 
@@ -109,15 +113,17 @@ async def ingest_pdf(file_path: Path, source_id: str) -> dict[str, Any]:
     summary   = catalog["summary"]
     sections  = catalog.get("sections", [])
     tags      = catalog.get("tags", [])
+    contains  = catalog.get("contains") or tags  # fallback to tags if LLM omits contains
 
     # ── 3. Write manifest entries ──────────────────────────────────
     # name: derive from the filename stem, title-cased
     name = file_path.stem.replace("_", " ").title()
 
     index_entry: dict = {
-        "id":      source_id,
-        "name":    name,
-        "summary": summary,
+        "id":       source_id,
+        "name":     name,
+        "summary":  summary,
+        "contains": contains,
     }
     detail_entry: dict = {
         "id":       source_id,

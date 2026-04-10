@@ -13,31 +13,48 @@ pdfs:
     hotel allowances, per diem rates, and expense reimbursement processes based on
     employee clearance levels.
   contains:
-  - flight class entitlements
-  - hotel allowances
-  - per diem rates
-  - expense approval thresholds
-  - booking rules
+  - flight class entitlements by clearance level
+  - advance booking rules
+  - hotel nightly reimbursement limits
+  - per diem meal and incidental rates
+  - expense claim submission process
 - id: hr_handbook_v3
   name: Hr Handbook V3
   summary: The HR Handbook v3 outlines onboarding procedures, leave policies, and
     performance review processes for employees.
   contains:
-  - annual leave policy
+  - onboarding checklist requirements
+  - employment document submission
+  - IT setup procedures
+  - annual leave entitlements
   - sick leave policy
-  - parental leave
-  - performance review process
-  - performance improvement plan
-  - onboarding
-  - code of conduct
+  - parental leave options
+  - performance review schedule
+  - employee rating scale
 - id: it_security_policy
   name: It Security Policy
-  summary: The IT Security Policy outlines password requirements, data classification,
-    and security incident reporting protocols.
+  summary: The document outlines IT security policies including password requirements,
+    data classification, and security incident reporting.
+  contains:
+  - password complexity requirements
+  - password rotation policy
+  - multi-factor authentication methods
+  - data classification categories
+  - restricted data handling procedures
 - id: finance_policy_2024
   name: Finance Policy 2024
   summary: The Finance Policy 2024 outlines expense approval thresholds, project budget
     limits, reimbursement procedures, and vendor payment terms.
+  contains:
+  - expense approval thresholds
+  - project budget limits
+  - reimbursement procedures
+  - vendor payment terms
+  - international expense pre-approval
+  - budget overrun approvals
+  - disputed reimbursement claims
+  - vendor invoice processing
+  - currency conversion for expenses
 tables:
 - id: employees
   name: Employees

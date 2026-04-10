@@ -16,7 +16,8 @@
       "Bash(python -m core.registry)",
       "Bash(python -m core.state)",
       "Bash(python:*)",
-      "Bash(echo \"---EXIT: $?\")"
+      "Bash(echo \"---EXIT: $?\")",
+      "Bash(pip show:*)"
     ]
   }
 }

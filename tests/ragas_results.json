@@ -1,8 +1,56 @@
 {
+  "metadata": {
+    "timestamp": "2026-04-10T13:55:56.503203+00:00",
+    "base_url": "http://localhost:8000",
+    "n_questions": 18,
+    "n_evaluated": 16,
+    "n_errors": 0,
+    "n_eval_runs": 1,
+    "ragas_version": "0.4.3",
+    "judge_model": "gpt-4o-mini"
+  },
+  "thresholds": {
+    "faithfulness": 0.8,
+    "context_precision": 0.75,
+    "context_recall": 0.7
+  },
+  "overall": {
+    "faithfulness": 0.8069444444444445,
+    "context_precision": 0.5156249999643229,
+    "context_recall": 0.9166666666666666
+  },
+  "by_difficulty": {
+    "simple_lookup": {
+      "faithfulness": 0.95,
+      "context_precision": 0.8749999999375,
+      "context_recall": 1.0,
+      "n": 4
+    },
+    "filtering": {
+      "faithfulness": 0.6666666666666666,
+      "context_precision": 0.0,
+      "context_recall": 1.0,
+      "n": 3
+    },
+    "cross_source": {
+      "faithfulness": 0.8222222222222222,
+      "context_precision": 0.6666666666200001,
+      "context_recall": 0.8,
+      "n": 5
+    },
+    "multi_hop": {
+      "faithfulness": 0.75,
+      "context_precision": 0.35416666664479163,
+      "context_recall": 0.9166666666666666,
+      "n": 4
+    }
+  },
   "results": [
     {
       "question_num": 1,
       "question": "What are the password rotation requirements?",
+      "reference_answer": "Passwords must be changed every 90 days. The system prompts the user 7 days before expiration. After expiration, the account is locked until a new password is set via the self-service portal or IT support.",
+      "difficulty": "simple_lookup",
       "expected_sources": [
         "it_security_policy"
       ],
@@ -10,19 +58,24 @@
         "it_security_policy"
       ],
       "source_match": true,
-      "final_answer": "Passwords must be changed every 90 days, with a prompt 7 days before expiration. After expiration, the account is locked until a new password is set via the self-service portal or IT support.",
+      "status": "success",
+      "final_answer": "Passwords must be changed every 90 days, with a prompt 7 days before expiration. If a password expires, the account is locked until a new password meeting complexity requirements is set via the self-service portal or IT support.",
       "contexts": [
         "**Complexity:** Passwords must contain at least one uppercase letter, one lowercase letter, one digit, and one special character from the set !@#$%^&*()-_=+. Dictionary words and common patterns (e.g. 'Password123!') are detected and rejected. \n\n**Rotation:** Passwords must be changed every 90 days. The system will prompt the user 7 days before expiration. After expiration, the account is locked until a new password is set via the self-service portal or IT support. \n\n**History:** The last 10"
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 12.8,
-      "faithfulness": 1.0
+      "elapsed_s": 19.9,
+      "faithfulness": 1.0,
+      "context_precision": 0.9999999999,
+      "context_recall": 1.0
     },
     {
       "question_num": 2,
       "question": "How many sick days do employees get per year?",
+      "reference_answer": "All employees receive 10 sick days per year regardless of clearance level. A medical certificate is required for absences of 3 or more consecutive days. Unused sick leave does not carry over and is not compensated.",
+      "difficulty": "simple_lookup",
       "expected_sources": [
         "hr_handbook_v3"
       ],
@@ -30,40 +83,25 @@
         "hr_handbook_v3"
       ],
       "source_match": true,
-      "final_answer": "Employees receive 10 sick days per year. A medical certificate is required for absences of 3 or more consecutive days, and unused sick leave does not carry over or get compensated.",
+      "status": "success",
+      "final_answer": "Employees receive 10 sick days per year, and a medical certificate is required for absences of 3 or more consecutive days; unused sick leave does not carry over or get compensated.",
       "contexts": [
+        "## **Annual Leave:** \n\nClearance Level D: 15 days per year. Clearance Level C: 18 days per year. Clearance Level B: 22 days per year. Clearance Level A: 25 days per year. Unused annual leave may be carried over up to a maximum of 5 days into the",
         "be carried over up to a maximum of 5 days into the following calendar year. Any leave beyond the carry-over limit is forfeited on January 1st. \n\n## **Sick Leave:** \n\nAll employees receive 10 sick days per year regardless of clearance level. A medical certificate is required for absences of 3 or more consecutive days. Unused sick leave does not carry over and is not compensated. \n\n## **Parental Leave:** \n\nAll employees are entitled to 90 days of paid parental leave for the birth or adoption of a"
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 9.8,
-      "faithfulness": 1.0
+      "elapsed_s": 20.0,
+      "faithfulness": 1.0,
+      "context_precision": 0.49999999995,
+      "context_recall": 1.0
     },
     {
       "question_num": 3,
-      "question": "Which projects are currently on hold?",
-      "expected_sources": [
-        "projects"
-      ],
-      "actual_sources": [
-        "projects"
-      ],
-      "source_match": true,
-      "final_answer": "The projects currently on hold are:\n\n1. \"Revenue Dashboard\" in the Finance department, led by employee ID 5, with a budget of $55,000 and $12,000 spent so far, started on August 1, 2024.\n\n2. \"Data Lake Setup\" in the Engineering department, led by employee ID 1, with a budget of $150,000 and $45,000 spent so far, started on October 1, 2024.",
-      "contexts": [
-        "From projects.csv: project_id is 7, project_name is Revenue Dashboard, department is Finance, lead_employee_id is 5, budget is 55000, spent is 12000, start_date is 2024-08-01, end_date is None.",
-        "From projects.csv: project_id is 10, project_name is Data Lake Setup, department is Engineering, lead_employee_id is 1, budget is 150000, spent is 45000, start_date is 2024-10-01, end_date is None."
-      ],
-      "retry_count": 0,
-      "audit_verdict": "PASS",
-      "chat_intent": "PLAN",
-      "elapsed_s": 8.7,
-      "faithfulness": 0.8333333333333334
-    },
-    {
-      "question_num": 4,
       "question": "What is the late payment penalty for vendors?",
+      "reference_answer": "A penalty of 1.5% per month is applied to any invoice not paid within the agreed payment terms. The penalty is calculated on the outstanding balance from the due date until full payment is received.",
+      "difficulty": "simple_lookup",
       "expected_sources": [
         "finance_policy_2024"
       ],
@@ -71,7 +109,8 @@
         "finance_policy_2024"
       ],
       "source_match": true,
-      "final_answer": "A late payment penalty of 1.5% per month is applied to any invoice not paid within the agreed payment terms, calculated on the outstanding balance from the due date until full payment is received.",
+      "status": "success",
+      "final_answer": "The late payment penalty for vendors is 1.5% per month on any invoice not paid within the agreed payment terms, calculated from the due date until full payment.",
       "contexts": [
         "payment terms. Preferred vendor status is granted to vendors with a minimum 2-year relationship and annual spend exceeding $50,000. Preferred vendors receive priority invoice processing. \n\n**Small Purchases:** Amounts under $50 are paid immediately upon receipt of goods or services. No purchase order is required for amounts under $50. \n\n**Late Payment Penalty:** A penalty of 1.5% per month is applied to any invoice not paid within the agreed payment terms. The penalty is calculated on the",
         "ed payment terms. The penalty is calculated on the outstanding balance from the due date until full payment is received. \n\nAll vendor disputes must be escalated to the Finance department within 10 business days of the disputed invoice date."
@@ -79,75 +118,205 @@
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 11.5,
-      "faithfulness": 1.0
+      "elapsed_s": 17.8,
+      "faithfulness": 1.0,
+      "context_precision": 0.99999999995,
+      "context_recall": 1.0
     },
     {
-      "question_num": 5,
-      "question": "Which employees have expired training records?",
+      "question_num": 4,
+      "question": "What are the payment terms for preferred vendors?",
+      "reference_answer": "Preferred vendors have Net 15 payment terms. Preferred vendor status is granted to vendors with a minimum 2-year relationship and annual spend exceeding $50,000. They receive priority invoice processing.",
+      "difficulty": "simple_lookup",
       "expected_sources": [
-        "training_records"
+        "finance_policy_2024"
       ],
       "actual_sources": [
-        "training_records"
+        "finance_policy_2024"
       ],
       "source_match": true,
-      "final_answer": "The employees with expired training records have the following employee IDs: 2, 4, 6, and 9.",
+      "status": "success",
+      "final_answer": "The payment terms for preferred vendors are Net 15, with invoices due within 15 days of receipt; they also receive priority processing. A late payment penalty of 1.5% per month applies to invoices not paid within these terms.",
       "contexts": [
-        "From training_records.csv: employee_id is 2.",
-        "From training_records.csv: employee_id is 4.",
-        "From training_records.csv: employee_id is 6.",
-        "From training_records.csv: employee_id is 9."
+        "## **Section 4: Vendor Payment Terms** \n\nAll vendor invoices are processed according to the payment terms agreed in the vendor contract. Standard and preferred vendor terms are defined below. \n\n**Standard Vendors:** Net 30 payment terms. Invoices are due within 30 calendar days of receipt. Early payment discounts offered by vendors may be accepted if the discount exceeds 2% and the invoice amount exceeds $1,000. \n\n**Preferred Vendors:** Net 15 payment terms. Preferred vendor status is granted",
+        "payment terms. Preferred vendor status is granted to vendors with a minimum 2-year relationship and annual spend exceeding $50,000. Preferred vendors receive priority invoice processing. \n\n**Small Purchases:** Amounts under $50 are paid immediately upon receipt of goods or services. No purchase order is required for amounts under $50. \n\n**Late Payment Penalty:** A penalty of 1.5% per month is applied to any invoice not paid within the agreed payment terms. The penalty is calculated on the"
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 8.1,
-      "faithfulness": 0.5
+      "elapsed_s": 22.7,
+      "faithfulness": 0.8,
+      "context_precision": 0.99999999995,
+      "context_recall": 1.0
+    },
+    {
+      "question_num": 5,
+      "question": "What is the salary range for a clearance level B engineer?",
+      "reference_answer": "The salary range for a clearance level B engineer is $110,000 to $155,000 USD.",
+      "difficulty": "simple_lookup",
+      "expected_sources": [
+        "salary_bands"
+      ],
+      "actual_sources": [],
+      "source_match": false,
+      "status": "success",
+      "final_answer": "There is no salary range available for a clearance level B engineer because the data was not found in the system.",
+      "contexts": [
+        "No context retrieved."
+      ],
+      "retry_count": 0,
+      "audit_verdict": "PASS",
+      "chat_intent": "PLAN",
+      "elapsed_s": 16.7,
+      "faithfulness": 0.0,
+      "context_precision": 0.0,
+      "context_recall": 0.0
     },
     {
       "question_num": 6,
-      "question": "What projects has Michal Katz led and are any over budget?",
+      "question": "Which projects are currently on hold?",
+      "reference_answer": "Two projects are currently on hold: Revenue Dashboard (project_id 7, Finance department, budget $55,000, spent $12,000) and Data Lake Setup (project_id 10, Engineering department, budget $150,000, spent $45,000).",
+      "difficulty": "filtering",
       "expected_sources": [
         "projects"
       ],
       "actual_sources": [
-        "employees"
+        "projects"
       ],
-      "source_match": false,
-      "final_answer": "There is no information available on the specific projects led by Michal Katz or whether any are over budget due to a failure in retrieving data from the projects table.",
+      "source_match": true,
+      "status": "success",
+      "final_answer": "The projects currently on hold are 'Revenue Dashboard' and 'Data Lake Setup'.",
       "contexts": [
-        "From employees.csv: full_name_managed is Amir Dayan, employee_id_managed is 9."
+        "From projects.csv: project_name is Revenue Dashboard, status is On Hold.",
+        "From projects.csv: project_name is Data Lake Setup, status is On Hold."
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 16.6,
-      "faithfulness": 0.6666666666666666
+      "elapsed_s": 12.7,
+      "faithfulness": 1.0,
+      "context_precision": 0.0,
+      "context_recall": 1.0
     },
     {
       "question_num": 7,
-      "question": "What is the salary range for a clearance B engineer?",
+      "question": "Which employees have expired training records?",
+      "reference_answer": "Four employees have expired training records: Dan Cohen (employee_id 2, Security Awareness expired 2024-11-05), Oren Shapiro (employee_id 4, Emergency Procedures expired 2024-08-10), Tal Mizrahi (employee_id 6, Data Privacy expired 2024-06-15), and Amir Dayan (employee_id 9, Financial Compliance expired 2024-09-25).",
+      "difficulty": "filtering",
       "expected_sources": [
-        "salary_bands"
+        "training_records"
       ],
       "actual_sources": [
-        "salary_bands"
+        "employees",
+        "training_records"
       ],
       "source_match": true,
-      "final_answer": "The salary range for a clearance B engineer is between $110,000 and $155,000.",
+      "status": "success",
+      "final_answer": "There is no information linking specific employees to expired training records in the available data.",
       "contexts": [
-        "From salary_bands: salary_min is 110000, salary_max is 155000."
+        "From employees.csv: full_name is Noa Levi.",
+        "From employees.csv: full_name is Dan Cohen.",
+        "From employees.csv: full_name is Yael Ben-David.",
+        "From employees.csv: full_name is Oren Shapiro.",
+        "From employees.csv: full_name is Michal Katz.",
+        "From employees.csv: full_name is Tal Mizrahi.",
+        "From employees.csv: full_name is Roi Peretz.",
+        "From employees.csv: full_name is Shira Goldman.",
+        "From employees.csv: full_name is Amir Dayan.",
+        "From employees.csv: full_name is Hila Stern.",
+        "From training_records.csv: expiry_date is 2025-01-10, status is Completed.",
+        "From training_records.csv: expiry_date is 2025-03-15, status is Completed.",
+        "From training_records.csv: expiry_date is 2025-06-20, status is Completed.",
+        "From training_records.csv: expiry_date is 2024-11-05, status is Expired.",
+        "From training_records.csv: expiry_date is 2025-04-12, status is Completed.",
+        "From training_records.csv: expiry_date is 2025-02-18, status is Completed.",
+        "From training_records.csv: expiry_date is 2025-05-22, status is Completed.",
+        "From training_records.csv: expiry_date is None, status is In Progress.",
+        "From training_records.csv: expiry_date is 2025-01-25, status is Completed.",
+        "From training_records.csv: expiry_date is 2024-08-10, status is Expired.",
+        "From training_records.csv: expiry_date is 2025-03-01, status is Completed.",
+        "From training_records.csv: expiry_date is 2025-07-14, status is Completed.",
+        "From training_records.csv: expiry_date is 2025-09-30, status is Completed.",
+        "From training_records.csv: expiry_date is 2025-04-05, status is Completed.",
+        "From training_records.csv: expiry_date is 2024-06-15, status is Expired.",
+        "From training_records.csv: expiry_date is 2025-02-28, status is Completed.",
+        "From training_records.csv: expiry_date is 2025-08-20, status is Completed.",
+        "From training_records.csv: expiry_date is 2025-05-10, status is Completed.",
+        "From training_records.csv: expiry_date is None, status is In Progress.",
+        "From training_records.csv: expiry_date is 2025-06-01, status is Completed.",
+        "From training_records.csv: expiry_date is 2025-03-20, status is Completed.",
+        "From training_records.csv: expiry_date is 2024-09-25, status is Expired.",
+        "From training_records.csv: expiry_date is 2025-01-05, status is Completed.",
+        "From training_records.csv: expiry_date is 2025-04-18, status is Completed.",
+        "From training_records.csv: expiry_date is 2025-07-30, status is Completed."
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 8.4,
-      "faithfulness": 1.0
+      "elapsed_s": 15.6,
+      "faithfulness": 0.0,
+      "context_precision": 0.0,
+      "context_recall": 1.0
     },
     {
       "question_num": 8,
+      "question": "What are Hila Stern's training records and scores?",
+      "reference_answer": "Hila Stern (employee_id 10) has three completed training records: Security Awareness (score 96, completed 2024-01-05, expires 2025-01-05), Leadership Fundamentals (score 98, completed 2024-04-18, expires 2025-04-18), and Data Privacy (score 93, completed 2024-07-30, expires 2025-07-30).",
+      "difficulty": "filtering",
+      "expected_sources": [
+        "training_records"
+      ],
+      "actual_sources": [],
+      "source_match": false,
+      "status": "success",
+      "final_answer": "There are no training records or scores available for Hila Stern in the system.",
+      "contexts": [
+        "No context retrieved."
+      ],
+      "retry_count": 0,
+      "audit_verdict": "PASS",
+      "chat_intent": "PLAN",
+      "elapsed_s": 12.7,
+      "faithfulness": 0.0,
+      "context_precision": 0.0,
+      "context_recall": 0.0
+    },
+    {
+      "question_num": 9,
+      "question": "Which completed projects went over budget?",
+      "reference_answer": "Three completed projects went over budget: Annual Audit Automation (budget $45,000, spent $48,000, over by $3,000), CRM Integration (budget $80,000, spent $82,500, over by $2,500), and API Gateway Upgrade (budget $70,000, spent $70,500, over by $500).",
+      "difficulty": "filtering",
+      "expected_sources": [
+        "projects"
+      ],
+      "actual_sources": [
+        "projects"
+      ],
+      "source_match": true,
+      "status": "success",
+      "final_answer": "The completed projects that went over budget are Annual Audit Automation, CRM Integration, and API Gateway Upgrade.",
+      "contexts": [
+        "From projects.csv: project_name is Cloud Migration Phase 1, budget is 120000, spent is 115000, over_budget is False.",
+        "From projects.csv: project_name is Annual Audit Automation, budget is 45000, spent is 48000, over_budget is True.",
+        "From projects.csv: project_name is CRM Integration, budget is 80000, spent is 82500, over_budget is True.",
+        "From projects.csv: project_name is Compliance Training System, budget is 30000, spent is 28000, over_budget is False.",
+        "From projects.csv: project_name is API Gateway Upgrade, budget is 70000, spent is 70500, over_budget is True.",
+        "From projects.csv: project_name is Benefits Platform Migration, budget is 35000, spent is 34000, over_budget is False.",
+        "From projects.csv: project_name is Sales Forecasting Tool, budget is 65000, spent is 63000, over_budget is False."
+      ],
+      "retry_count": 0,
+      "audit_verdict": "PASS",
+      "chat_intent": "PLAN",
+      "elapsed_s": 14.2,
+      "faithfulness": 1.0,
+      "context_precision": 0.0,
+      "context_recall": 1.0
+    },
+    {
+      "question_num": 10,
       "question": "What flight class is Dan Cohen entitled to?",
+      "reference_answer": "Dan Cohen has clearance level B. Employees with clearance level B are entitled to Business Class on flights exceeding 4 hours, and Economy or Economy Plus on shorter flights.",
+      "difficulty": "cross_source",
       "expected_sources": [
         "employees",
         "travel_policy_2024"
@@ -157,7 +326,8 @@
         "travel_policy_2024"
       ],
       "source_match": true,
-      "final_answer": "Dan Cohen is entitled to Business Class on flights exceeding 4 hours. For shorter flights, he is entitled to Economy or Economy Plus, based on his clearance level B.",
+      "status": "success",
+      "final_answer": "Dan Cohen is entitled to Business Class on flights over 4 hours; for shorter flights, he can choose Economy or Economy Plus.",
       "contexts": [
         "From employees.csv: clearance_level is B.",
         "**Clearance Level B:** Employees with clearance level B are entitled to Business Class on flights exceeding 4 hours. Economy or Economy Plus applies to shorter flights."
@@ -165,224 +335,133 @@
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 11.1,
-      "faithfulness": 1.0
-    },
-    {
-      "question_num": 9,
-      "question": "What is Oren Shapiro's hotel nightly allowance?",
-      "expected_sources": [
-        "employees",
-        "travel_policy_2024"
-      ],
-      "actual_sources": [
-        "employees",
-        "travel_policy_2024"
-      ],
-      "source_match": true,
-      "final_answer": "Oren Shapiro's hotel nightly allowance is up to $180 per night, as he has a clearance level C. This is specified in the Travel Policy 2024 document.",
-      "contexts": [
-        "From employees.csv: clearance_level is C.",
-        "## **Section 3: Hotel Nightly Allowances** \n\nHotel accommodation is reimbursed up to the nightly limits below. Receipts are required for all hotel claims. The limits apply per night including all taxes and fees. \n\n**Clearance Level D:** Up to $120 per night. Shared accommodation is encouraged for conferences and team events to reduce costs. \n\n**Clearance Level C:** Up to $180 per night. Standard business hotels are preferred."
-      ],
-      "retry_count": 0,
-      "audit_verdict": "PASS",
-      "chat_intent": "PLAN",
-      "elapsed_s": 13.4,
-      "faithfulness": 0.6666666666666666
-    },
-    {
-      "question_num": 10,
-      "question": "What data can Tal Mizrahi access according to the security policy?",
-      "expected_sources": [
-        "employees",
-        "it_security_policy"
-      ],
-      "actual_sources": [
-        "employees",
-        "it_security_policy"
-      ],
-      "source_match": true,
-      "final_answer": "Tal Mizrahi, with a clearance level of D, has no access to Employee Personal Data and Financial Records, read-only access to Customer Data, and the access level for Internal Documents is not specified.",
-      "contexts": [
-        "From employees.csv: clearance_level is D.",
-        "## **Section 4: Data Access Matrix** \n\nThe following matrix defines data access permissions by clearance level. Access is enforced at the system level and audited quarterly. \n\n|**Data Category**|**Clearance A**|**Clearance B**|**Clearance C**|**Clearance D**|\n|---|---|---|---|---|\n|Employee Personal Data|Full Access|Read Only|No Access|No Access|\n|Financial Records|Full Access|Full Access|Read Only|No Access|\n|Customer Data|Full Access|Full Access|Full Access|Read Only|\n|Internal Documents|Full"
-      ],
-      "retry_count": 0,
-      "audit_verdict": "PASS",
-      "chat_intent": "PLAN",
-      "elapsed_s": 14.2,
-      "faithfulness": 0.8
+      "elapsed_s": 15.9,
+      "faithfulness": 1.0,
+      "context_precision": 0.49999999995,
+      "context_recall": 1.0
     },
     {
       "question_num": 11,
-      "question": "What is Noa Levi's monthly project budget limit?",
+      "question": "What is Oren Shapiro's hotel nightly allowance?",
+      "reference_answer": "Oren Shapiro has clearance level C. Employees with clearance level C are entitled to up to $180 per night for hotel accommodation.",
+      "difficulty": "cross_source",
       "expected_sources": [
         "employees",
-        "finance_policy_2024"
+        "travel_policy_2024"
       ],
       "actual_sources": [
         "employees",
-        "finance_policy_2024"
+        "travel_policy_2024"
       ],
       "source_match": true,
-      "final_answer": "Noa Levi's monthly project budget limit is $50,000, as they are in the Engineering department with a clearance level of A.",
+      "status": "success",
+      "final_answer": "Oren Shapiro's hotel nightly allowance is up to $180 per night for clearance level C employees, including all taxes and fees.",
       "contexts": [
-        "From employees.csv: department is Engineering, clearance_level is A.",
-        "## **Section 2: Project Budget Limits by Department and Clearance Level** \n\nEach employee's monthly project budget limit is determined by their department and clearance level. Budgets may not be pooled or transferred between employees without Finance approval. \n\n|**Department**|**Clearance A**|**Clearance B**|**Clearance C**|**Clearance",
-        "ce A**|**Clearance B**|**Clearance C**|**Clearance D**|\n|---|---|---|---|---|\n|Engineering|$50,000|$30,000|$15,000|$5,000|\n|Finance|$40,000|$25,000|$10,000|$3,000|\n|HR|$20,000|$12,000|$6,000|$2,000|\n|Sales|$45,000|$28,000|$14,000|$4,000|\n\n\nBudget overruns exceeding 10% require written justification and approval from the department head. Overruns exceeding 25% require additional approval from the Finance department."
+        "From employees.csv: clearance_level is C.",
+        "## **Section 3: Hotel Nightly Allowances** \n\nHotel accommodation is reimbursed up to the nightly limits below. Receipts are required for all hotel claims. The limits apply per night including all taxes and fees. \n\n**Clearance Level D:** Up to $120 per night. Shared accommodation is encouraged for conferences and team events to reduce costs. \n\n**Clearance Level C:** Up to $180 per night. Standard business hotels are preferred. \n\n**Clearance Level B:** Up to $250 per night. Premium business"
       ],
-      "retry_count": 1,
+      "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 27.0,
-      "faithfulness": 1.0
+      "elapsed_s": 20.1,
+      "faithfulness": 1.0,
+      "context_precision": 0.49999999995,
+      "context_recall": 0.5
     },
     {
       "question_num": 12,
-      "question": "Compare the flight entitlements of Noa Levi and Oren Shapiro.",
+      "question": "What data can Tal Mizrahi access according to the security policy?",
+      "reference_answer": "Tal Mizrahi has clearance level D. According to the data access matrix, clearance level D has: Read Only access to Customer Data, Full Access to Internal Documents and Public Data, and No Access to Employee Personal Data and Financial Records.",
+      "difficulty": "cross_source",
       "expected_sources": [
         "employees",
-        "travel_policy_2024"
+        "it_security_policy"
       ],
       "actual_sources": [
-        "travel_policy_2024",
-        "employees"
+        "employees",
+        "it_security_policy"
       ],
       "source_match": true,
-      "final_answer": "Noa Levi is entitled to Business Class on all flights due to their clearance level A. Oren Shapiro is entitled to Economy Class on all flights, but can fly Business Class on flights over 8 hours with prior manager approval, as their clearance level is C.",
+      "status": "success",
+      "final_answer": "Tal Mizrahi has a clearance level of D, which allows access to Restricted data, including employee personal data, security credentials, encryption keys, and privileged legal correspondence, provided it is stored on encrypted systems and transmitted with end-to-end encryption and prior approval.",
       "contexts": [
-        "## **Travel Policy 2024** \n\n## **Section 1: Flight Class Entitlements by Clearance Level** \n\nAll corporate travel must comply with the flight class entitlements defined below. Entitlements are determined solely by the employee's clearance level at the time of travel booking. \n\n**Clearance Level D:** Employees with clearance level D are entitled to Economy class only on all flights, regardless of duration. Budget carrier options should be considered where available. \n\n**Clearance Level C:**",
-        "nsidered where available. \n\n**Clearance Level C:** Employees with clearance level C are entitled to Economy class on all flights. Business Class is permitted on flights exceeding 8 hours with prior manager approval. \n\n**Clearance Level B:** Employees with clearance level B are entitled to Business Class on flights exceeding 4 hours. Economy or Economy Plus applies to shorter flights. \n\n**Clearance Level A:** Employees with clearance level A are entitled to Business Class on all flights. First",
-        "From employees.csv: clearance_level is A.",
-        "From employees.csv: clearance_level is C."
+        "From employees.csv: clearance_level is D.",
+        "es clearance level B or above to access. Examples: employee personal data (salaries, health records, disciplinary history), security credentials, encryption keys, legal correspondence marked privileged. Personal employee data is always classified as Restricted regardless of content. \n\nRestricted data must be stored only on encrypted, company-managed systems. Transmission of Restricted data outside the corporate network requires end-to-end encryption and prior approval from the IT Security team.",
+        "## **Section 2: Data Classification** \n\nAll company data must be classified into one of the following four categories. The classification determines storage, access, sharing, and retention requirements. \n\n**Public:** Information approved for external distribution. Examples: marketing materials, published financial reports, job postings. No access restrictions. \n\n**Internal:** Information intended for all employees but not for external parties. Examples: internal newsletters, org charts, general",
+        "xamples: internal newsletters, org charts, general process documents. Requires company network or VPN access. \n\n**Confidential:** Sensitive business information with limited distribution. Examples: financial projections, strategic plans, customer contracts, unreleased product specifications. Access restricted to employees with a need-to-know basis as determined by the data owner. \n\n**Restricted:** The highest classification level. Requires clearance level B or above to access. Examples:"
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 13.2,
-      "faithfulness": 0.25
+      "elapsed_s": 33.9,
+      "faithfulness": 0.7777777777777778,
+      "context_precision": 0.99999999995,
+      "context_recall": 0.5
     },
     {
       "question_num": 13,
-      "question": "What are the annual leave entitlements for Dan Cohen and Shira Goldman?",
-      "expected_sources": [
-        "employees",
-        "hr_handbook_v3"
-      ],
-      "actual_sources": [
-        "hr_handbook_v3",
-        "employees"
-      ],
-      "source_match": true,
-      "final_answer": "Dan Cohen is entitled to 22 days of annual leave per year with a clearance level of B. Shira Goldman is entitled to 18 days per year with a clearance level of C.",
-      "contexts": [
-        "## **Chapter 2: Leave Policy** \n\nLeave entitlements are determined by the employee's clearance level. All leave must be requested through the HR portal at least 5 business days in advance, except for sick leave which may be reported on the day. \n\n## **Annual Leave:** \n\nClearance Level D: 15 days per year. Clearance Level C: 18 days per year. Clearance Level B: 22 days per year. Clearance Level A: 25 days per year. Unused annual leave may be carried over up to a maximum of 5 days into the",
-        "be carried over up to a maximum of 5 days into the following calendar year. Any leave beyond the carry-over limit is forfeited on January 1st. \n\n## **Sick Leave:** \n\nAll employees receive 10 sick days per year regardless of clearance level. A medical certificate is required for absences of 3 or more consecutive days. Unused sick leave does not carry over and is not compensated. \n\n## **Parental Leave:** \n\nAll employees are entitled to 90 days of paid parental leave for the birth or adoption of a",
-        "From employees.csv: employee_id is 2, full_name is Dan Cohen, email is dan.cohen@corp.com, department is Finance, clearance_level is B, hire_date is 2018-07-01, manager_id is 1.0.",
-        "From employees.csv: employee_id is 8, full_name is Shira Goldman, email is shira.g@corp.com, department is HR, clearance_level is C, hire_date is 2023-01-09, manager_id is 3.0."
-      ],
-      "retry_count": 0,
-      "audit_verdict": "PASS",
-      "chat_intent": "PLAN",
-      "elapsed_s": 15.6,
-      "faithfulness": 1.0
-    },
-    {
-      "question_num": 14,
-      "question": "Which employees lead projects that are over budget, and what are their clearance levels?",
-      "expected_sources": [
-        "projects",
-        "employees"
-      ],
-      "actual_sources": [
-        "projects",
-        "employees"
-      ],
-      "source_match": true,
-      "final_answer": "The employees leading projects that are over budget are: \n\n1. Employee ID 5, leading 'Annual Audit Automation' and 'CRM Integration' projects, with a clearance level of B.\n\n2. Employee ID 7, leading the 'API Gateway Upgrade' project, with a clearance level of B.",
-      "contexts": [
-        "From projects.csv: project_name is Annual Audit Automation, lead_employee_id is 5.",
-        "From projects.csv: project_name is CRM Integration, lead_employee_id is 5.",
-        "From projects.csv: project_name is API Gateway Upgrade, lead_employee_id is 7.",
-        "From employees.csv: clearance_level is B.",
-        "From employees.csv: clearance_level is B."
-      ],
-      "retry_count": 0,
-      "audit_verdict": "PASS",
-      "chat_intent": "PLAN",
-      "elapsed_s": 422.6,
-      "faithfulness": 0.42857142857142855
-    },
-    {
-      "question_num": 15,
-      "question": "Does Roi Peretz have an active Security Awareness training, and when does it expire?",
-      "expected_sources": [
-        "training_records"
-      ],
-      "actual_sources": [],
-      "source_match": false,
-      "final_answer": "I couldn't retrieve information about Roi Peretz's Security Awareness training status or expiry date due to a query syntax error in the training records database.",
-      "contexts": [
-        "I was unable to retrieve information about Roi Peretz's Security Awareness training status and expiry date due to a query syntax error in the training records database. Therefore, I cannot provide details on whether the training is active or when it expires."
-      ],
-      "retry_count": 0,
-      "audit_verdict": "PASS",
-      "chat_intent": "PLAN",
-      "elapsed_s": 8.9,
-      "faithfulness": 1.0
-    },
-    {
-      "question_num": 16,
-      "question": "Oren Shapiro wants to expense a $1,500 hotel stay - who needs to approve it?",
+      "question": "What is Noa Levi's monthly project budget limit?",
+      "reference_answer": "Noa Levi is in the Engineering department with clearance level A. Her monthly project budget limit is $50,000.",
+      "difficulty": "cross_source",
       "expected_sources": [
         "employees",
         "finance_policy_2024"
       ],
       "actual_sources": [
         "employees",
-        "travel_policy_2024"
-      ],
-      "source_match": false,
-      "final_answer": "Oren Shapiro's $1,500 hotel stay exceeds the $180 per night reimbursement limit for clearance level C and requires approval. However, the specific approver for this expense could not be determined due to a failed data retrieval task.",
-      "contexts": [
-        "From employees.csv: clearance_level is C.",
-        "## **Section 3: Hotel Nightly Allowances** \n\nHotel accommodation is reimbursed up to the nightly limits below. Receipts are required for all hotel claims. The limits apply per night including all taxes and fees. \n\n**Clearance Level D:** Up to $120 per night. Shared accommodation is encouraged for conferences and team events to reduce costs. \n\n**Clearance Level C:** Up to $180 per night. Standard business hotels are preferred."
-      ],
-      "retry_count": 1,
-      "audit_verdict": "PASS",
-      "chat_intent": "PLAN",
-      "elapsed_s": 23.0,
-      "faithfulness": 0.25
-    },
-    {
-      "question_num": 17,
-      "question": "Can Shira Goldman access employee personal data?",
-      "expected_sources": [
-        "employees",
-        "it_security_policy"
-      ],
-      "actual_sources": [
-        "employees",
-        "it_security_policy"
+        "finance_policy_2024"
       ],
       "source_match": true,
-      "final_answer": "Shira Goldman cannot access employee personal data because her clearance level is C, and access requires at least a clearance level of B.",
+      "status": "success",
+      "final_answer": "Noa Levi's monthly project budget limit is $50,000, based on her clearance level A and her department, Engineering.",
       "contexts": [
-        "From employees.csv: clearance_level is C.",
-        "es clearance level B or above to access. Examples: employee personal data (salaries, health records, disciplinary history), security credentials, encryption keys, legal correspondence marked privileged. Personal employee data is always classified as Restricted regardless of content. \n\nRestricted data must be stored only on encrypted, company-managed systems. Transmission of Restricted data outside the corporate network requires end-to-end encryption and prior approval from the IT Security team.",
-        "## **Section 4: Data Access Matrix** \n\nThe following matrix defines data access permissions by clearance level. Access is enforced at the system level and audited quarterly. \n\n|**Data Category**|**Clearance A**|**Clearance B**|**Clearance C**|**Clearance D**|\n|---|---|---|---|---|\n|Employee Personal Data|Full Access|Read Only|No Access|No Access|\n|Financial Records|Full Access|Full Access|Read Only|No Access|\n|Customer Data|Full Access|Full Access|Full Access|Read Only|\n|Internal Documents|Full"
+        "From employees.csv: clearance_level is A, department is Engineering.",
+        "## **Section 2: Project Budget Limits by Department and Clearance Level** \n\nEach employee's monthly project budget limit is determined by their department and clearance level. Budgets may not be pooled or transferred between employees without Finance approval. \n\n|**Department**|**Clearance A**|**Clearance B**|**Clearance C**|**Clearance",
+        "ce A**|**Clearance B**|**Clearance C**|**Clearance D**|\n|---|---|---|---|---|\n|Engineering|$50,000|$30,000|$15,000|$5,000|\n|Finance|$40,000|$25,000|$10,000|$3,000|\n|HR|$20,000|$12,000|$6,000|$2,000|\n|Sales|$45,000|$28,000|$14,000|$4,000|\n\n\nBudget overruns exceeding 10% require written justification and approval from the department head. Overruns exceeding 25% require additional approval from the Finance department."
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 12.2,
-      "faithfulness": 1.0
+      "elapsed_s": 24.6,
+      "faithfulness": 1.0,
+      "context_precision": 0.3333333333,
+      "context_recall": 1.0
     },
     {
-      "question_num": 18,
-      "question": "If Amir Dayan gets a performance rating of 1, what happens next?",
+      "question_num": 14,
+      "question": "Can Shira Goldman access employee personal data?",
+      "reference_answer": "Shira Goldman has clearance level C. According to the data access matrix, clearance level C has No Access to Employee Personal Data. Therefore, Shira Goldman cannot access employee personal data.",
+      "difficulty": "cross_source",
       "expected_sources": [
+        "employees",
+        "it_security_policy"
+      ],
+      "actual_sources": [
+        "employees",
+        "it_security_policy"
+      ],
+      "source_match": true,
+      "status": "success",
+      "final_answer": "Shira Goldman has a clearance level of C, which is above the required level of B, so she is authorized to access employee personal data.",
+      "contexts": [
+        "From employees.csv: clearance_level is C.",
+        "es clearance level B or above to access. Examples: employee personal data (salaries, health records, disciplinary history), security credentials, encryption keys, legal correspondence marked privileged. Personal employee data is always classified as Restricted regardless of content. \n\nRestricted data must be stored only on encrypted, company-managed systems. Transmission of Restricted data outside the corporate network requires end-to-end encryption and prior approval from the IT Security team."
+      ],
+      "retry_count": 0,
+      "audit_verdict": "PASS",
+      "chat_intent": "PLAN",
+      "elapsed_s": 22.8,
+      "faithfulness": 0.3333333333333333,
+      "context_precision": 0.99999999995,
+      "context_recall": 1.0
+    },
+    {
+      "question_num": 15,
+      "question": "Compare the annual leave entitlements of Dan Cohen and Shira Goldman.",
+      "reference_answer": "Dan Cohen has clearance level B and is entitled to 22 days of annual leave per year. Shira Goldman has clearance level C and is entitled to 18 days of annual leave per year. Dan Cohen gets 4 more days than Shira Goldman.",
+      "difficulty": "multi_hop",
+      "expected_sources": [
+        "employees",
         "hr_handbook_v3"
       ],
       "actual_sources": [
@@ -390,162 +469,121 @@
         "hr_handbook_v3"
       ],
       "source_match": true,
-      "final_answer": "If Amir Dayan receives a performance rating of 1, he will be placed on a 90-day Performance Improvement Plan (PIP) with specific goals. Progress is reviewed every 30 days, and failure to meet the goals may lead to reassignment, demotion, or termination, subject to local employment law.",
+      "status": "success",
+      "final_answer": "Dan Cohen is entitled to 22 days of annual leave per year, while Shira Goldman is entitled to 18 days per year; both must request leave at least 5 business days in advance, and unused leave can be carried over up to 5 days.",
       "contexts": [
-        "From employees.csv: department is Sales, clearance_level is D.",
+        "From employees.csv: full_name is Dan Cohen, clearance_level is B, department is Finance, email is dan.cohen@corp.com, hire_date is 2018-07-01.",
+        "From employees.csv: full_name is Shira Goldman, clearance_level is C, department is HR, email is shira.g@corp.com, hire_date is 2023-01-09.",
+        "## **Chapter 2: Leave Policy** \n\nLeave entitlements are determined by the employee's clearance level. All leave must be requested through the HR portal at least 5 business days in advance, except for sick leave which may be reported on the day. \n\n## **Annual Leave:** \n\nClearance Level D: 15 days per year. Clearance Level C: 18 days per year. Clearance Level B: 22 days per year. Clearance Level A: 25 days per year. Unused annual leave may be carried over up to a maximum of 5 days into the",
+        "be carried over up to a maximum of 5 days into the following calendar year. Any leave beyond the carry-over limit is forfeited on January 1st. \n\n## **Sick Leave:** \n\nAll employees receive 10 sick days per year regardless of clearance level. A medical certificate is required for absences of 3 or more consecutive days. Unused sick leave does not carry over and is not compensated. \n\n## **Parental Leave:** \n\nAll employees are entitled to 90 days of paid parental leave for the birth or adoption of a"
+      ],
+      "retry_count": 0,
+      "audit_verdict": "PASS",
+      "chat_intent": "PLAN",
+      "elapsed_s": 26.3,
+      "faithfulness": 1.0,
+      "context_precision": 0.3333333333,
+      "context_recall": 0.6666666666666666
+    },
+    {
+      "question_num": 16,
+      "question": "Which employees lead projects that are over budget, and what are their clearance levels?",
+      "reference_answer": "Three projects are over budget. Michal Katz (employee_id 5, clearance B) leads Annual Audit Automation (budget $45,000, spent $48,000) and CRM Integration (budget $80,000, spent $82,500). Roi Peretz (employee_id 7, clearance B) leads API Gateway Upgrade (budget $70,000, spent $70,500).",
+      "difficulty": "multi_hop",
+      "expected_sources": [
+        "projects",
+        "employees"
+      ],
+      "actual_sources": [
+        "projects"
+      ],
+      "source_match": false,
+      "status": "success",
+      "final_answer": "Employees leading over budget projects are employee IDs 5 and 7; employee 5 leads two projects, and employee 7 leads one. Their clearance levels could not be retrieved due to data access failure.",
+      "contexts": [
+        "From projects.csv: project_id is 2, project_name is Annual Audit Automation, budget is 45000, spent is 48000.",
+        "From projects.csv: project_id is 4, project_name is CRM Integration, budget is 80000, spent is 82500.",
+        "From projects.csv: project_id is 8, project_name is API Gateway Upgrade, budget is 70000, spent is 70500.",
+        "From projects.csv: lead_employee_id is 5.",
+        "From projects.csv: lead_employee_id is 5.",
+        "From projects.csv: lead_employee_id is 7."
+      ],
+      "retry_count": 0,
+      "audit_verdict": "PASS",
+      "chat_intent": "PLAN",
+      "elapsed_s": 22.9,
+      "faithfulness": 0.0,
+      "context_precision": 0.0,
+      "context_recall": 1.0
+    },
+    {
+      "question_num": 17,
+      "question": "Oren Shapiro wants to expense a $1,500 hotel stay - who needs to approve it?",
+      "reference_answer": "A $1,500 expense falls in the $500-$2,000 range, which requires Manager approval plus Department Head sign-off. The turnaround time is 5 business days.",
+      "difficulty": "multi_hop",
+      "expected_sources": [
+        "employees",
+        "finance_policy_2024"
+      ],
+      "actual_sources": [
+        "employees",
+        "finance_policy_2024"
+      ],
+      "source_match": true,
+      "status": "success",
+      "final_answer": "Oren Shapiro's $1,500 hotel stay requires approval from his Manager and the Head of the Engineering department.",
+      "contexts": [
+        "From employees.csv: clearance_level is C, department is Engineering.",
+        "## **Finance Policy 2024** \n\n## **Section 1: Expense Approval Thresholds** \n\nAll employee expenses must follow the approval thresholds defined below. The required approvers depend on the expense amount. Receipts and turnaround times are as specified. \n\n|**Amount Range**|**Required Approvers**|**Receipt Required**|**Turnaround Time**|\n|---|---|---|---|\n|Up to $100|Self-approval|No|Immediate|\n|$100 - $500|Manager approval|Yes|3 business days|\n|$500 - $2,000|Manager + Department Head|Yes|5",
+        "ys|\n|$500 - $2,000|Manager + Department Head|Yes|5 business days|\n|Over $2,000|Manager + Department Head + Finance|Yes|10 business days|\n\n\nExpenses submitted without the required approvals will be returned to the employee and must be resubmitted through the correct approval chain."
+      ],
+      "retry_count": 1,
+      "audit_verdict": "PASS",
+      "chat_intent": "PLAN",
+      "elapsed_s": 71.0,
+      "faithfulness": 1.0,
+      "context_precision": 0.5833333333041666,
+      "context_recall": 1.0
+    },
+    {
+      "question_num": 18,
+      "question": "If Amir Dayan receives a performance rating of 1, what happens next?",
+      "reference_answer": "A rating of 1 means Unsatisfactory. Any employee receiving a rating below 2 is placed on a Performance Improvement Plan (PIP). The PIP lasts 90 days and includes specific, measurable goals agreed upon by the employee and manager. Progress is reviewed at 30-day intervals. Failure to meet PIP goals may result in reassignment, demotion, or termination.",
+      "difficulty": "multi_hop",
+      "expected_sources": [
+        "hr_handbook_v3"
+      ],
+      "actual_sources": [
+        "hr_handbook_v3"
+      ],
+      "source_match": true,
+      "status": "success",
+      "final_answer": "If Amir Dayan receives a performance rating of 1, he will be placed on a 90-day Performance Improvement Plan with specific goals, reviewed every 30 days, and failure to meet these goals may result in reassignment, demotion, or termination.",
+      "contexts": [
+        "## **Chapter 3: Performance Reviews** \n\nPerformance reviews are conducted every 6 months, in June and December. Reviews are a structured conversation between the employee and their direct manager, documented in the HR portal. \n\n## **Rating Scale:** \n\nEmployees are rated on a scale of 1 to 5: 1 = Unsatisfactory, 2 = Needs Improvement, 3 = Meets Expectations, 4 = Exceeds Expectations, 5 = Outstanding. Ratings are based on goal achievement, competency demonstration, and alignment with company",
+        "mpetency demonstration, and alignment with company values. \n\n## **Performance Improvement Plan (PIP):** \n\nAny employee receiving a rating below 2 in a review cycle will be placed on a Performance Improvement Plan. The PIP lasts 90 days and includes specific, measurable goals agreed upon by the employee and manager. Progress is reviewed at 30-day intervals. Failure to meet PIP goals may result in reassignment, demotion, or termination in accordance with local employment law. \n\nEmployees who",
         "## **Chapter 3: Performance Reviews** \n\nPerformance reviews are conducted every 6 months, in June and December. Reviews are a structured conversation between the employee and their direct manager, documented in the HR portal. \n\n## **Rating Scale:** \n\nEmployees are rated on a scale of 1 to 5: 1 = Unsatisfactory, 2 = Needs Improvement, 3 = Meets Expectations, 4 = Exceeds Expectations, 5 = Outstanding. Ratings are based on goal achievement, competency demonstration, and alignment with company",
         "mpetency demonstration, and alignment with company values. \n\n## **Performance Improvement Plan (PIP):** \n\nAny employee receiving a rating below 2 in a review cycle will be placed on a Performance Improvement Plan. The PIP lasts 90 days and includes specific, measurable goals agreed upon by the employee and manager. Progress is reviewed at 30-day intervals. Failure to meet PIP goals may result in reassignment, demotion, or termination in accordance with local employment law. \n\nEmployees who"
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 13.5,
-      "faithfulness": 1.0
-    },
-    {
-      "question_num": 19,
-      "question": "What is the per diem rate for clearance level E?",
-      "expected_sources": [
-        "travel_policy_2024"
-      ],
-      "actual_sources": [
-        "travel_policy_2024"
-      ],
-      "source_match": true,
-      "final_answer": "The per diem rate for clearance level E is not specified in the Travel Policy 2024.",
-      "contexts": [
-        "The per diem rate for clearance level E is not specified in the Travel Policy 2024, as the relevant information could not be retrieved from the document."
-      ],
-      "retry_count": 0,
-      "audit_verdict": "PASS",
-      "chat_intent": "PLAN",
-      "elapsed_s": 8.0,
-      "faithfulness": 1.0
-    },
-    {
-      "question_num": 20,
-      "question": "What department is Alice in?",
-      "expected_sources": [
-        "employees"
-      ],
-      "actual_sources": [],
-      "source_match": false,
-      "final_answer": "There is no department information for Alice in the system. The requested data was not found in employees.csv.",
-      "contexts": [
-        "The department of Alice could not be retrieved because the query returned no results. The requested data was not found in employees.csv."
-      ],
-      "retry_count": 0,
-      "audit_verdict": "PASS",
-      "chat_intent": "PLAN",
-      "elapsed_s": 6.7,
-      "faithfulness": 1.0
+      "elapsed_s": 25.7,
+      "faithfulness": 1.0,
+      "context_precision": 0.499999999975,
+      "context_recall": 1.0
     }
   ],
-  "ragas_scores": {
-    "overall": {
-      "faithfulness": 0.8197619047619048
+  "skipped": [
+    {
+      "index": 4,
+      "reason": "no_context",
+      "question": "What is the salary range for a clearance level B engineer?"
     },
-    "per_question": [
-      {
-        "question_num": 1,
-        "question": "What are the password rotation requirements?",
-        "faithfulness": 1.0
-      },
-      {
-        "question_num": 2,
-        "question": "How many sick days do employees get per year?",
-        "faithfulness": 1.0
-      },
-      {
-        "question_num": 3,
-        "question": "Which projects are currently on hold?",
-        "faithfulness": 0.8333333333333334
-      },
-      {
-        "question_num": 4,
-        "question": "What is the late payment penalty for vendors?",
-        "faithfulness": 1.0
-      },
-      {
-        "question_num": 5,
-        "question": "Which employees have expired training records?",
-        "faithfulness": 0.5
-      },
-      {
-        "question_num": 6,
-        "question": "What projects has Michal Katz led and are any over budget?",
-        "faithfulness": 0.6666666666666666
-      },
-      {
-        "question_num": 7,
-        "question": "What is the salary range for a clearance B engineer?",
-        "faithfulness": 1.0
-      },
-      {
-        "question_num": 8,
-        "question": "What flight class is Dan Cohen entitled to?",
-        "faithfulness": 1.0
-      },
-      {
-        "question_num": 9,
-        "question": "What is Oren Shapiro's hotel nightly allowance?",
-        "faithfulness": 0.6666666666666666
-      },
-      {
-        "question_num": 10,
-        "question": "What data can Tal Mizrahi access according to the security policy?",
-        "faithfulness": 0.8
-      },
-      {
-        "question_num": 11,
-        "question": "What is Noa Levi's monthly project budget limit?",
-        "faithfulness": 1.0
-      },
-      {
-        "question_num": 12,
-        "question": "Compare the flight entitlements of Noa Levi and Oren Shapiro.",
-        "faithfulness": 0.25
-      },
-      {
-        "question_num": 13,
-        "question": "What are the annual leave entitlements for Dan Cohen and Shira Goldman?",
-        "faithfulness": 1.0
-      },
-      {
-        "question_num": 14,
-        "question": "Which employees lead projects that are over budget, and what are their clearance levels?",
-        "faithfulness": 0.42857142857142855
-      },
-      {
-        "question_num": 15,
-        "question": "Does Roi Peretz have an active Security Awareness training, and when does it expire?",
-        "faithfulness": 1.0
-      },
-      {
-        "question_num": 16,
-        "question": "Oren Shapiro wants to expense a $1,500 hotel stay - who needs to approve it?",
-        "faithfulness": 0.25
-      },
-      {
-        "question_num": 17,
-        "question": "Can Shira Goldman access employee personal data?",
-        "faithfulness": 1.0
-      },
-      {
-        "question_num": 18,
-        "question": "If Amir Dayan gets a performance rating of 1, what happens next?",
-        "faithfulness": 1.0
-      },
-      {
-        "question_num": 19,
-        "question": "What is the per diem rate for clearance level E?",
-        "faithfulness": 1.0
-      },
-      {
-        "question_num": 20,
-        "question": "What department is Alice in?",
-        "faithfulness": 1.0
-      }
-    ]
-  }
+    {
+      "index": 7,
+      "reason": "no_context",
+      "question": "What are Hila Stern's training records and scores?"
+    }
+  ]
 }

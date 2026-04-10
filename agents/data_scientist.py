@@ -160,6 +160,10 @@ Rules:
     For SQL: SELECT [group_column], COUNT(*) as count FROM ... GROUP BY [group_column],
     not just SELECT COUNT(*) FROM ...
   - Never guess or invent values — only query what is in the table.
+  - Before writing any query, verify that every column name you plan to use exists
+    in the schema provided. If a needed column does not exist in the schema, set
+    query to an empty string and explain which column is missing and what columns
+    are available.
   - If the task cannot be answered from this table, set query to an empty string
     and explain why in the explanation field.
 
