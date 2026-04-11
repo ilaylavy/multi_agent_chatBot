@@ -305,6 +305,28 @@ def data_scientist_view(state: AgentState, task: Task, manifest_details: str) ->
     }
 
 
+def _error_output(
+    error_msg: str,
+    category: str,
+    *,
+    query_used: str | None = None,
+    table_name: str | None = None,
+    tables_loaded: list | None = None,
+    reasoning: Any = None,
+    injected_context: str | None = None,
+) -> str:
+    """Build a consistent JSON string for all data-scientist error cases."""
+    return json.dumps({
+        "error": error_msg,
+        "error_category": category,
+        "query_used": query_used,
+        "table_name": table_name,
+        "tables_loaded": tables_loaded,
+        "reasoning": reasoning,
+        "injected_context": injected_context,
+    })
+
+
 # ---------------------------------------------------------------------------
 # Worker callable
 # ---------------------------------------------------------------------------
@@ -335,6 +357,7 @@ async def data_scientist_worker(
     manifest_details = get_manifest_details(source_ids)
     raw_entries      = [_get_raw_entry(sid) for sid in source_ids]
     tables_loaded    = [e.get("table_name", e.get("filename", "?")) for e in raw_entries]
+    table_name       = ", ".join(tables_loaded)   # early default; single-source overrides below
 
     view = data_scientist_view(state, task, manifest_details)
 
@@ -345,7 +368,12 @@ async def data_scientist_worker(
             return TaskResult(
                 task_id=task["task_id"],
                 worker_type="data_scientist",
-                output=json.dumps({"error": f"Table file not found: {file_path}"}),
+                output=_error_output(
+                    f"Table file not found: {file_path}",
+                    "FILE_NOT_FOUND",
+                    tables_loaded=tables_loaded,
+                    injected_context=injected_context,
+                ),
                 success=False,
                 error=f"Table file not found: {file_path}. "
                       f"Place the file in {_tables_dir()} and retry.",
@@ -413,8 +441,15 @@ async def data_scientist_worker(
             return TaskResult(
                 task_id=task["task_id"],
                 worker_type="data_scientist",
-                output=json.dumps({"error": f"Generated query has invalid syntax: {exc}. Query was: {query}",
-                                   "query_used": query}),
+                output=_error_output(
+                    f"Generated query has invalid syntax: {exc}. Query was: {query}",
+                    "SYNTAX_ERROR",
+                    query_used=query,
+                    table_name=table_name,
+                    tables_loaded=tables_loaded,
+                    reasoning=reasoning,
+                    injected_context=injected_context,
+                ),
                 success=False,
                 error=f"Generated query has invalid syntax: {exc}. Query was: {query}",
             )
@@ -424,7 +459,15 @@ async def data_scientist_worker(
             return TaskResult(
                 task_id=task["task_id"],
                 worker_type="data_scientist",
-                output=json.dumps({"error": "LLM generated an empty SQL query.", "query_used": query}),
+                output=_error_output(
+                    "LLM generated an empty SQL query.",
+                    "EMPTY_QUERY",
+                    query_used=query,
+                    table_name=table_name,
+                    tables_loaded=tables_loaded,
+                    reasoning=reasoning,
+                    injected_context=injected_context,
+                ),
                 success=False,
                 error="LLM generated an empty SQL query.",
             )
@@ -432,8 +475,15 @@ async def data_scientist_worker(
             return TaskResult(
                 task_id=task["task_id"],
                 worker_type="data_scientist",
-                output=json.dumps({"error": f"Only SELECT statements are permitted. Got: {query[:80]}",
-                                   "query_used": query}),
+                output=_error_output(
+                    f"Only SELECT statements are permitted. Got: {query[:80]}",
+                    "NON_SELECT",
+                    query_used=query,
+                    table_name=table_name,
+                    tables_loaded=tables_loaded,
+                    reasoning=reasoning,
+                    injected_context=injected_context,
+                ),
                 success=False,
                 error=f"Only SELECT statements are permitted. Got: {query[:80]}",
             )
@@ -459,7 +509,15 @@ async def data_scientist_worker(
         return TaskResult(
             task_id=task["task_id"],
             worker_type="data_scientist",
-            output=json.dumps({"error": str(exc), "query_used": query}),
+            output=_error_output(
+                str(exc),
+                "EXECUTION_ERROR",
+                query_used=query,
+                table_name=table_name,
+                tables_loaded=tables_loaded,
+                reasoning=reasoning,
+                injected_context=injected_context,
+            ),
             success=False,
             error=f"Query execution failed: {exc}",
         )
@@ -470,7 +528,15 @@ async def data_scientist_worker(
         return TaskResult(
             task_id=task["task_id"],
             worker_type="data_scientist",
-            output=json.dumps({"error": f"Query returned no results. The requested data was not found in {table_name}."}),
+            output=_error_output(
+                f"Query returned no results. The requested data was not found in {table_name}.",
+                "NO_RESULTS",
+                query_used=query,
+                table_name=table_name,
+                tables_loaded=tables_loaded,
+                reasoning=reasoning,
+                injected_context=injected_context,
+            ),
             success=False,
             error=f"Query returned no results. The requested data was not found in {table_name}.",
         )
