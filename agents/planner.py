@@ -27,10 +27,15 @@ logger = logging.getLogger(__name__)
 
 _SYSTEM_PROMPT = """\
 You are a query planner. Decompose the user's question into tasks. Each task \
-retrieves one piece of information from one source listed in the manifest.
+retrieves information from one or more sources listed in the manifest.
 
 Routing: assign worker_type by source type in the manifest. PDF sources use \
 "librarian". CSV or SQLite sources use "data_scientist".
+
+Multi-source tasks: when a task requires joining or comparing data across \
+multiple tables, assign all relevant source IDs in a single task. When a task \
+needs to search across multiple PDFs, list all relevant PDF source IDs. \
+Use single-source tasks for independent lookups.
 
 Dependencies: if a task requires a value that must first be retrieved from \
 another source, create that retrieval as a separate task and set depends_on. \
@@ -44,13 +49,13 @@ Respond with ONLY JSON — no explanation, no markdown:
   "reasoning": {
     "information_needed": ["what facts or rules are needed"],
     "source_assignments": [
-      {"info": "...", "source_id": "...", "worker_type": "...", "justification": "..."}
+      {"info": "...", "source_ids": ["..."], "worker_type": "...", "justification": "..."}
     ],
     "dependencies": ["e.g. t2 needs t1 because ..."]
   },
   "tasks": [
     {"task_id": "t1", "worker_type": "librarian"|"data_scientist",
-     "description": "...", "source_id": "...", "depends_on": null|"t1"}
+     "description": "...", "source_ids": ["..."], "depends_on": null|"t1"}
   ]
 }
 """
@@ -120,7 +125,7 @@ async def planner_node(state: AgentState) -> dict:
                 task_id=t["task_id"],
                 worker_type=t["worker_type"],
                 description=t["description"],
-                source_id=t["source_id"],
+                source_ids=t["source_ids"] if isinstance(t["source_ids"], list) else [t["source_ids"]],
                 depends_on=t.get("depends_on"),
             )
             for t in data["tasks"]
@@ -157,13 +162,13 @@ def test_planner():
             "source_assignments": [
                 {
                     "info": "Noa's clearance level",
-                    "source_id": "employees",
+                    "source_ids": ["employees"],
                     "worker_type": "data_scientist",
                     "justification": "employees table contains clearance levels for each employee"
                 },
                 {
                     "info": "Flight class entitlements by clearance level",
-                    "source_id": "travel_policy_2024",
+                    "source_ids": ["travel_policy_2024"],
                     "worker_type": "librarian",
                     "justification": "travel_policy_2024 PDF contains flight class entitlements by clearance level"
                 }
@@ -175,14 +180,14 @@ def test_planner():
                 "task_id":     "t1",
                 "worker_type": "data_scientist",
                 "description": "Look up Noa's clearance level in the employee table",
-                "source_id":   "employees",
+                "source_ids":  ["employees"],
                 "depends_on":  None,
             },
             {
                 "task_id":     "t2",
                 "worker_type": "librarian",
                 "description": "Find flight class entitlements for clearance level A",
-                "source_id":   "travel_policy_2024",
+                "source_ids":  ["travel_policy_2024"],
                 "depends_on":  "t1",
             },
         ]
@@ -228,11 +233,11 @@ def test_planner():
     assert len(result["plan"]) == 2
     assert result["plan"][0]["task_id"] == "t1"
     assert result["plan"][0]["worker_type"] == "data_scientist"
-    assert result["plan"][0]["source_id"] == "employees"
+    assert result["plan"][0]["source_ids"] == ["employees"]
     assert result["plan"][0]["depends_on"] is None
     assert result["plan"][1]["task_id"] == "t2"
     assert result["plan"][1]["worker_type"] == "librarian"
-    assert result["plan"][1]["source_id"] == "travel_policy_2024"
+    assert result["plan"][1]["source_ids"] == ["travel_policy_2024"]
     assert result["plan"][1]["depends_on"] == "t1"
     assert set(result.keys()) == {"plan", "planner_reasoning"}, "Node must return plan + planner_reasoning"
     assert isinstance(result["planner_reasoning"], str)
@@ -257,9 +262,9 @@ def test_planner():
         "reasoning": {
             "information_needed": ["highest salary_max from salary_bands", "employee name matching that band"],
             "source_assignments": [
-                {"info": "highest salary_max", "source_id": "salary_bands", "worker_type": "data_scientist",
+                {"info": "highest salary_max", "source_ids": ["salary_bands"], "worker_type": "data_scientist",
                  "justification": "salary_bands contains min/max salary ranges"},
-                {"info": "employee name", "source_id": "employees", "worker_type": "data_scientist",
+                {"info": "employee name", "source_ids": ["employees"], "worker_type": "data_scientist",
                  "justification": "employees table has names and clearance levels"}
             ],
             "dependencies": ["t2 needs t1 to know which clearance_level/department to match"]
@@ -269,14 +274,14 @@ def test_planner():
                 "task_id":     "t1",
                 "worker_type": "data_scientist",
                 "description": "Find the clearance_level and department with the highest salary_max from salary_bands",
-                "source_id":   "salary_bands",
+                "source_ids":  ["salary_bands"],
                 "depends_on":  None,
             },
             {
                 "task_id":     "t2",
                 "worker_type": "data_scientist",
                 "description": "Find the employee name in employees whose clearance_level and department match t1 result",
-                "source_id":   "employees",
+                "source_ids":  ["employees"],
                 "depends_on":  "t1",
             },
         ]
@@ -304,15 +309,15 @@ tables:
     plan = result_cross["plan"]
     assert len(plan) >= 2, \
         f"Cross-table query must produce at least 2 tasks, got {len(plan)}"
-    source_ids = {t["source_id"] for t in plan}
-    assert len(source_ids) >= 2, \
-        f"Cross-table plan must reference at least 2 different sources, got {source_ids}"
+    all_sids = {sid for t in plan for sid in t["source_ids"]}
+    assert len(all_sids) >= 2, \
+        f"Cross-table plan must reference at least 2 different sources, got {all_sids}"
     deps = [t["depends_on"] for t in plan if t["depends_on"] is not None]
     assert len(deps) >= 1, \
         "Cross-table plan must have at least one task with a dependency"
     assert plan[1]["depends_on"] == "t1", \
         f"Second task must depend on t1, got depends_on={plan[1]['depends_on']!r}"
-    print(f"PASS: cross-table query produces {len(plan)} tasks across {source_ids} with dependency chain")
+    print(f"PASS: cross-table query produces {len(plan)} tasks across {all_sids} with dependency chain")
 
     # ── Test 6: PDF query uses librarian, table query uses data_scientist, reasoning has justifications ──
     mixed_output = json.dumps({
@@ -324,13 +329,13 @@ tables:
             "source_assignments": [
                 {
                     "info": "Noa's department",
-                    "source_id": "employees",
+                    "source_ids": ["employees"],
                     "worker_type": "data_scientist",
                     "justification": "employees table contains department information for each employee"
                 },
                 {
                     "info": "Password rotation policy",
-                    "source_id": "it_security_policy",
+                    "source_ids": ["it_security_policy"],
                     "worker_type": "librarian",
                     "justification": "it_security_policy PDF contains password requirements and rotation rules"
                 }
@@ -342,14 +347,14 @@ tables:
                 "task_id": "t1",
                 "worker_type": "data_scientist",
                 "description": "Look up Noa's department from the employees table",
-                "source_id": "employees",
+                "source_ids": ["employees"],
                 "depends_on": None,
             },
             {
                 "task_id": "t2",
                 "worker_type": "librarian",
                 "description": "Find the password rotation policy",
-                "source_id": "it_security_policy",
+                "source_ids": ["it_security_policy"],
                 "depends_on": None,
             },
         ]
@@ -376,11 +381,11 @@ tables:
 
     plan_m = result_mixed["plan"]
     # Table task must use data_scientist
-    table_task = next(t for t in plan_m if t["source_id"] == "employees")
+    table_task = next(t for t in plan_m if "employees" in t["source_ids"])
     assert table_task["worker_type"] == "data_scientist", \
         f"Table source must use data_scientist, got {table_task['worker_type']}"
     # PDF task must use librarian
-    pdf_task = next(t for t in plan_m if t["source_id"] == "it_security_policy")
+    pdf_task = next(t for t in plan_m if "it_security_policy" in t["source_ids"])
     assert pdf_task["worker_type"] == "librarian", \
         f"PDF source must use librarian, got {pdf_task['worker_type']}"
     # Reasoning must include justifications referencing the sources
@@ -403,10 +408,10 @@ tables:
                 "Entitlement rule from a policy document using that property"
             ],
             "source_assignments": [
-                {"info": "Dan's property", "source_id": "employees",
+                {"info": "Dan's property", "source_ids": ["employees"],
                  "worker_type": "data_scientist",
                  "justification": "employees table contains entity properties"},
-                {"info": "Entitlement rule", "source_id": "travel_policy_2024",
+                {"info": "Entitlement rule", "source_ids": ["travel_policy_2024"],
                  "worker_type": "librarian",
                  "justification": "travel policy contains entitlement rules"}
             ],
@@ -415,10 +420,10 @@ tables:
         "tasks": [
             {"task_id": "t1", "worker_type": "data_scientist",
              "description": "Look up Dan Cohen's property from employees",
-             "source_id": "employees", "depends_on": None},
+             "source_ids": ["employees"], "depends_on": None},
             {"task_id": "t2", "worker_type": "librarian",
              "description": "Find entitlement rule using the property from t1",
-             "source_id": "travel_policy_2024", "depends_on": "t1"},
+             "source_ids": ["travel_policy_2024"], "depends_on": "t1"},
         ]
     })
     mock_response_prereq = MagicMock()
@@ -451,7 +456,7 @@ tables:
         "reasoning": {
             "information_needed": ["Password rotation policy from a document"],
             "source_assignments": [
-                {"info": "Password rotation policy", "source_id": "it_security_policy",
+                {"info": "Password rotation policy", "source_ids": ["it_security_policy"],
                  "worker_type": "librarian",
                  "justification": "IT security policy contains password rules"}
             ],
@@ -460,7 +465,7 @@ tables:
         "tasks": [
             {"task_id": "t1", "worker_type": "librarian",
              "description": "Find the password rotation policy",
-             "source_id": "it_security_policy", "depends_on": None},
+             "source_ids": ["it_security_policy"], "depends_on": None},
         ]
     })
     mock_response_direct = MagicMock()

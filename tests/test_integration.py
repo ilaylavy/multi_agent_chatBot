@@ -120,7 +120,7 @@ def test_data_scientist_real():
         "task_id":     "t1",
         "worker_type": "data_scientist",
         "description": "Find the full name and clearance level of the employee named Noa Levi",
-        "source_id":   "employees",
+        "source_ids":  ["employees"],
     }
 
     state: AgentState = AgentState(

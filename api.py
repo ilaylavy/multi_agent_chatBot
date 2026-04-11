@@ -424,7 +424,7 @@ def test_api():
         "retry_count":          0,
         "audit_result":         {"verdict": "PASS", "notes": "All claims verified."},
         "plan":                 [{"task_id": "t1", "worker_type": "data_scientist",
-                                  "description": "Look up clearance level", "source_id": "employees"}],
+                                  "description": "Look up clearance level", "source_ids": ["employees"]}],
         "task_results":         {"t1": {"task_id": "t1", "worker_type": "data_scientist",
                                         "output": "clearance_level: A", "success": True, "error": None}},
         "synthesizer_output":   "Noa Levi has clearance level A.",
@@ -456,7 +456,7 @@ def test_api():
     assert isinstance(trace["plan"], list) and len(trace["plan"]) == 1
     assert trace["plan"][0]["task_id"]     == "t1"
     assert trace["plan"][0]["worker_type"] == "data_scientist"
-    assert trace["plan"][0]["source_id"]   == "employees"
+    assert trace["plan"][0]["source_ids"]   == ["employees"]
     assert isinstance(trace["task_results"], dict), "trace.task_results must be a dict"
     assert "t1" in trace["task_results"], "task_results must contain t1"
     tr = trace["task_results"]["t1"]

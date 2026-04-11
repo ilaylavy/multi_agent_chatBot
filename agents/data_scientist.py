@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 
 from core.llm_config import _load_config, get_llm
-from core.manifest import get_manifest_detail, get_manifest_detail_raw
+from core.manifest import get_manifest_detail, get_manifest_detail_raw, get_manifest_details
 from core.parse import parse_llm_json
 from core.state import AgentState, Task, TaskResult
 
@@ -134,20 +134,111 @@ def _execute_sql(query: str, file_path: Path) -> tuple[Any, int]:
     return rows, len(rows)
 
 
+def _resolve_file_path(raw_entry: dict) -> Path:
+    """Resolve the on-disk path for a manifest entry."""
+    filename = raw_entry.get("filename", "")
+    base_path = raw_entry.get("base_path")
+    if base_path:
+        return _PROJECT_ROOT / base_path / filename
+    return _tables_dir() / filename
+
+
+def _load_into_memory_sqlite(raw_entries: list[dict]) -> tuple[sqlite3.Connection, list[str]]:
+    """
+    Load multiple sources into one in-memory SQLite database.
+
+    CSV files are loaded via pandas read_csv → df.to_sql().
+    SQLite files are ATTACHed and their tables copied in.
+    Returns (connection, list_of_table_names).
+    Raises ValueError on duplicate table names.
+    """
+    conn = sqlite3.connect(":memory:")
+    table_names: list[str] = []
+
+    for entry in raw_entries:
+        source_type = entry.get("type", "").lower()
+        file_path = _resolve_file_path(entry)
+        table_name = entry.get("table_name", Path(entry.get("filename", "")).stem)
+
+        if table_name in table_names:
+            conn.close()
+            raise ValueError(
+                f"Duplicate table name '{table_name}' when loading multiple sources. "
+                f"Cannot load both into the same in-memory database."
+            )
+
+        if source_type == "csv":
+            df = pd.read_csv(file_path)
+            df.to_sql(table_name, conn, if_exists="replace", index=False)
+        elif source_type == "sqlite":
+            conn.execute(f"ATTACH DATABASE '{file_path}' AS attached_db")
+            cursor = conn.execute(
+                "SELECT name FROM attached_db.sqlite_master WHERE type='table'"
+            )
+            for (tbl,) in cursor.fetchall():
+                if tbl in table_names:
+                    conn.execute("DETACH DATABASE attached_db")
+                    conn.close()
+                    raise ValueError(
+                        f"Duplicate table name '{tbl}' when loading SQLite source "
+                        f"'{entry['id']}'. Cannot load both into the same in-memory database."
+                    )
+                conn.execute(
+                    f"CREATE TABLE IF NOT EXISTS [{tbl}] AS SELECT * FROM attached_db.[{tbl}]"
+                )
+                table_names.append(tbl)
+            conn.execute("DETACH DATABASE attached_db")
+            continue  # table_names already extended above for sqlite
+        else:
+            conn.close()
+            raise ValueError(f"Unknown source type '{source_type}' for source '{entry['id']}'")
+
+        table_names.append(table_name)
+
+    return conn, table_names
+
+
+def _execute_sql_conn(query: str, conn: sqlite3.Connection) -> tuple[Any, int]:
+    """
+    Execute a SQL SELECT query against an open SQLite connection.
+
+    Only SELECT statements are permitted. Any other statement raises ValueError.
+    Returns (rows_as_list_of_dicts, row_count).
+    """
+    stripped = query.strip().upper()
+    if not stripped.startswith("SELECT"):
+        raise ValueError(
+            f"Only SELECT statements are permitted. Got: {query[:80]}"
+        )
+    conn.row_factory = sqlite3.Row
+    cursor = conn.execute(query)
+    rows = [dict(row) for row in cursor.fetchall()]
+    return rows, len(rows)
+
+
 # ---------------------------------------------------------------------------
 # Prompt templates
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
 You are a data query specialist. You will be given a task and the full schema
-of a data table. Your job is to write a precise query that retrieves exactly
-what the task requires.
+of one or more data tables. Your job is to reason about the data and write a
+precise query that retrieves exactly what the task requires.
+
+Reasoning step (required): before writing the query, think through which
+tables are involved, how they relate to each other, what join keys connect
+them (if multiple tables), and what the query will return. Write this
+reasoning first in your response JSON.
 
 Rules:
-  - For CSV tables  : write a pandas expression using `df` as the DataFrame variable.
-                      The expression must evaluate to a result (scalar, list, or DataFrame).
-                      Do NOT write `df = pd.read_csv(...)` — df is already loaded.
-  - For SQLite tables: write a standard SQL SELECT statement.
+  - For a single CSV table: write a pandas expression using `df` as the
+    DataFrame variable. The expression must evaluate to a result (scalar,
+    list, or DataFrame). Do NOT write `df = pd.read_csv(...)` — df is
+    already loaded.
+  - For a single SQLite table: write a standard SQL SELECT statement.
+  - When multiple tables are provided: all tables are loaded into a single
+    SQLite database. Write SQL (not pandas). You may JOIN across tables.
+    The available table names are listed in the schema block.
   - Select only the columns needed to answer the task — not all columns.
     For pandas: df[df['x'] == 'val'][['col_a', 'col_b']], not df[df['x'] == 'val'].
     For SQL: SELECT col_a, col_b FROM ..., not SELECT * FROM ...
@@ -164,7 +255,7 @@ Rules:
     in the schema provided. If a needed column does not exist in the schema, set
     query to an empty string and explain which column is missing and what columns
     are available.
-  - If the task cannot be answered from this table, set query to an empty string
+  - If the task cannot be answered from the table(s), set query to an empty string
     and explain why in the explanation field.
 
 Pandas examples (use these patterns — replace column_a, column_b with actual column names from the schema):
@@ -178,6 +269,12 @@ Pandas examples (use these patterns — replace column_a, column_b with actual c
 
 Respond with ONLY a JSON object matching this schema — no explanation, no markdown:
 {
+  "reasoning": {
+    "tables_used": ["table_name"],
+    "relationships": "how tables relate (or null if single table)",
+    "join_keys": ["column used to join"] or [],
+    "result_description": "what the query will return"
+  },
   "query_type":  "pandas" or "sql",
   "query":       "the exact query string to execute",
   "explanation": "one sentence describing what this query retrieves"
@@ -185,8 +282,8 @@ Respond with ONLY a JSON object matching this schema — no explanation, no mark
 """
 
 _USER_TEMPLATE = """\
-TABLE SCHEMA:
-{manifest_detail}
+TABLE SCHEMA(S):
+{manifest_details}
 
 TASK:
 {task_description}
@@ -197,14 +294,14 @@ TASK:
 # View function
 # ---------------------------------------------------------------------------
 
-def data_scientist_view(state: AgentState, task: Task, manifest_detail: str) -> dict:
+def data_scientist_view(state: AgentState, task: Task, manifest_details: str) -> dict:
     """
-    Returns only the assigned task and manifest detail for that table.
+    Returns only the assigned task and manifest details for its table(s).
     The LLM prompt is built from this view — nothing else from state is visible.
     """
     return {
-        "task":            task,
-        "manifest_detail": manifest_detail,
+        "task":             task,
+        "manifest_details": manifest_details,
     }
 
 
@@ -223,37 +320,45 @@ async def data_scientist_worker(
     ----------
     state : Full AgentState — filtered by data_scientist_view before use.
     task  : The single Task assigned to this worker.
+
+    Supports single-source (preserves pandas-for-CSV / SQL-for-SQLite) and
+    multi-source (loads everything into in-memory SQLite, forces SQL mode).
     """
-    source_id = task["source_id"]
+    source_ids = task["source_ids"]
 
     # ── Manifest ──────────────────────────────────────────────────
-    manifest_detail = get_manifest_detail(source_id)
-    raw_entry       = _get_raw_entry(source_id)
-    source_type     = raw_entry.get("type", "").lower()   # "csv" | "sqlite"
-    filename        = raw_entry.get("filename", "")
-    table_name      = raw_entry.get("table_name", filename)
+    manifest_details = get_manifest_details(source_ids)
+    raw_entries      = [_get_raw_entry(sid) for sid in source_ids]
 
-    view = data_scientist_view(state, task, manifest_detail)
+    view = data_scientist_view(state, task, manifest_details)
 
     # ── File existence check — never guess numbers ────────────────
-    base_path = raw_entry.get("base_path")
-    if base_path:
-        file_path = _PROJECT_ROOT / base_path / filename
-    else:
-        file_path = _tables_dir() / filename
-    if not file_path.exists():
-        return TaskResult(
-            task_id=task["task_id"],
-            worker_type="data_scientist",
-            output=json.dumps({"error": f"Table file not found: {file_path}"}),
-            success=False,
-            error=f"Table file not found: {file_path}. "
-                  f"Place the file in {_tables_dir()} and retry.",
-        )
+    for raw_entry in raw_entries:
+        file_path = _resolve_file_path(raw_entry)
+        if not file_path.exists():
+            return TaskResult(
+                task_id=task["task_id"],
+                worker_type="data_scientist",
+                output=json.dumps({"error": f"Table file not found: {file_path}"}),
+                success=False,
+                error=f"Table file not found: {file_path}. "
+                      f"Place the file in {_tables_dir()} and retry.",
+            )
+
+    # ── Determine execution mode ─────────────────────────────────
+    multi_source = len(source_ids) > 1
+
+    # For single source, preserve exact original behavior
+    if not multi_source:
+        raw_entry    = raw_entries[0]
+        source_type  = raw_entry.get("type", "").lower()
+        filename     = raw_entry.get("filename", "")
+        table_name   = raw_entry.get("table_name", filename)
+        file_path    = _resolve_file_path(raw_entry)
 
     # ── LLM query generation ──────────────────────────────────────
     user_message = _USER_TEMPLATE.format(
-        manifest_detail=view["manifest_detail"],
+        manifest_details=view["manifest_details"],
         task_description=view["task"]["description"],
     )
 
@@ -273,7 +378,18 @@ async def data_scientist_worker(
             f"Missing key in LLM output: {exc}\nRaw output: {response.content}"
         ) from exc
 
+    # Log reasoning for trace visibility (not stored in state)
+    reasoning = data.get("reasoning")
+    if reasoning:
+        logger.info("Data Scientist reasoning: %s", json.dumps(reasoning, indent=2))
+
     # ── Pre-execution validation ─────────────────────────────────
+    if multi_source:
+        # Multi-source always uses SQL
+        if query_type != "sql":
+            logger.warning("Multi-source task got query_type='%s', forcing 'sql'", query_type)
+            query_type = "sql"
+
     if query_type == "pandas":
         try:
             compile(query, "<string>", "eval")
@@ -308,7 +424,15 @@ async def data_scientist_worker(
 
     # ── Sandboxed execution ───────────────────────────────────────
     try:
-        if query_type == "pandas":
+        if multi_source:
+            # Multi-source: load all tables into in-memory SQLite
+            conn, table_names = _load_into_memory_sqlite(raw_entries)
+            try:
+                result_value, row_count = _execute_sql_conn(query, conn)
+            finally:
+                conn.close()
+            table_name = ", ".join(table_names)
+        elif query_type == "pandas":
             result_value, row_count = _execute_pandas(query, file_path)
         elif query_type == "sql":
             result_value, row_count = _execute_sql(query, file_path)
@@ -363,7 +487,7 @@ def test_data_scientist():
         "task_id":     "t1",
         "worker_type": "data_scientist",
         "description": "Find the full name and clearance level of all level-A employees",
-        "source_id":   "employees",
+        "source_ids":  ["employees"],
     }
 
     fake_state: AgentState = {
@@ -388,13 +512,19 @@ def test_data_scientist():
     patch_target       = f"{__name__}.get_llm"
     tables_dir_patch   = f"{__name__}._tables_dir"
 
-    # ── Test 1: data_scientist_view returns only task + manifest_detail
+    # ── Test 1: data_scientist_view returns only task + manifest_details
     view = data_scientist_view(fake_state, fake_task, "some schema")
-    assert set(view.keys()) == {"task", "manifest_detail"}
-    print("PASS: data_scientist_view returns only task and manifest_detail")
+    assert set(view.keys()) == {"task", "manifest_details"}
+    print("PASS: data_scientist_view returns only task and manifest_details")
 
     # ── Test 2: successful pandas query ───────────────────────
     fake_llm_output = json.dumps({
+        "reasoning": {
+            "tables_used": ["employees"],
+            "relationships": None,
+            "join_keys": [],
+            "result_description": "Returns full_name and clearance_level for level-A employees",
+        },
         "query_type":  "pandas",
         "query":       "df[df['clearance_level'] == 'A'][['full_name', 'clearance_level']]",
         "explanation": "Filter employees with clearance level A",
@@ -424,7 +554,7 @@ def test_data_scientist():
 
     # ── Test 3: missing table file returns success=False ───────
     # Use a filename guaranteed not to exist regardless of test data state
-    bad_task: Task = {**fake_task, "source_id": "ghost_table"}
+    bad_task: Task = {**fake_task, "source_ids": ["ghost_table"]}
     mock_raw_entry = {
         "id": "ghost_table", "filename": "ghost_table_does_not_exist.csv",
         "type": "csv", "table_name": "ghost_table_does_not_exist",
@@ -432,7 +562,7 @@ def test_data_scientist():
     with patch(patch_target, return_value=mock_llm), \
          patch(tables_dir_patch, return_value=fixture_tables_dir), \
          patch(f"{__name__}._get_raw_entry", return_value=mock_raw_entry), \
-         patch(f"{__name__}.get_manifest_detail", return_value="fake schema"):
+         patch(f"{__name__}.get_manifest_details", return_value="fake schema"):
         result_missing: TaskResult = asyncio.run(
             data_scientist_worker(fake_state, bad_task)
         )
@@ -457,6 +587,7 @@ def test_data_scientist():
 
     # ── Test 5: bad query execution is sandboxed ───────────────
     crash_output = json.dumps({
+        "reasoning": {"tables_used": ["employees"], "relationships": None, "join_keys": [], "result_description": "test"},
         "query_type":  "pandas",
         "query":       "df['nonexistent_column_xyz']",
         "explanation": "This query will fail",
@@ -474,6 +605,7 @@ def test_data_scientist():
 
     # ── Test 6: query that executes correctly but returns 0 rows ───
     empty_output = json.dumps({
+        "reasoning": {"tables_used": ["employees"], "relationships": None, "join_keys": [], "result_description": "test"},
         "query_type":  "pandas",
         "query":       "df[df['clearance_level'] == 'Z']",  # no level-Z employees in fixture
         "explanation": "Filter employees with clearance level Z (none exist)",
@@ -496,6 +628,7 @@ def test_data_scientist():
 
     # ── Test 7: scalar bool result serializes cleanly ───────────
     bool_output = json.dumps({
+        "reasoning": {"tables_used": ["employees"], "relationships": None, "join_keys": [], "result_description": "test"},
         "query_type":  "pandas",
         "query":       "(df['clearance_level'] == 'A').any()",
         "explanation": "Check if any employee has clearance level A",
@@ -518,6 +651,7 @@ def test_data_scientist():
 
     # ── Test 8: numpy integer result serializes cleanly ───────
     int_output = json.dumps({
+        "reasoning": {"tables_used": ["employees"], "relationships": None, "join_keys": [], "result_description": "test"},
         "query_type":  "pandas",
         "query":       "df['clearance_level'].nunique()",
         "explanation": "Count distinct clearance levels",
@@ -540,6 +674,7 @@ def test_data_scientist():
 
     # ── Test 9: invalid pandas syntax returns success=False with syntax error ──
     syntax_output = json.dumps({
+        "reasoning": {"tables_used": ["employees"], "relationships": None, "join_keys": [], "result_description": "test"},
         "query_type":  "pandas",
         "query":       "df[df['clearance_level'] == 'A'",  # missing closing bracket
         "explanation": "Broken filter",
@@ -562,6 +697,7 @@ def test_data_scientist():
 
     # ── Test 10: empty SQL string returns success=False ───────────
     empty_sql_output = json.dumps({
+        "reasoning": {"tables_used": ["employees"], "relationships": None, "join_keys": [], "result_description": "test"},
         "query_type":  "sql",
         "query":       "",
         "explanation": "Cannot answer from this table",
@@ -598,6 +734,7 @@ def test_data_scientist():
 
     # ── Test 12: group-by query returns department name + count ─────
     groupby_output = json.dumps({
+        "reasoning": {"tables_used": ["employees"], "relationships": None, "join_keys": [], "result_description": "test"},
         "query_type":  "pandas",
         "query":       "df.groupby('department').size().reset_index(name='count')",
         "explanation": "Count employees per department",
@@ -624,6 +761,58 @@ def test_data_scientist():
     depts = [r["department"] for r in rows]
     assert "Engineering" in depts, f"Expected Engineering in departments, got {depts}"
     print(f"PASS: group-by query returns {len(rows)} rows with department name + count: {rows}")
+
+    # ── Test 13: multi-table JOIN via in-memory SQLite ───────────
+    multi_task: Task = {
+        "task_id":     "t_multi",
+        "worker_type": "data_scientist",
+        "description": "Find each employee's salary_max by joining employees and salary_bands on clearance_level and department",
+        "source_ids":  ["employees", "salary_bands"],
+    }
+    # Mock raw entries pointing to fixture files
+    mock_employees_entry = {
+        "id": "employees", "filename": "employees.csv", "type": "csv",
+        "table_name": "employees", "base_path": "tests/fixtures/tables",
+    }
+    mock_salary_entry = {
+        "id": "salary_bands", "filename": "salary_bands.sqlite", "type": "sqlite",
+        "table_name": "salary_bands", "base_path": "tests/fixtures/tables",
+    }
+    multi_raw_entries = {"employees": mock_employees_entry, "salary_bands": mock_salary_entry}
+
+    join_llm_output = json.dumps({
+        "reasoning": {
+            "tables_used": ["employees", "salary_bands"],
+            "relationships": "employees.clearance_level = salary_bands.clearance_level AND employees.department = salary_bands.department",
+            "join_keys": ["clearance_level", "department"],
+            "result_description": "Returns each employee's name with their salary_max",
+        },
+        "query_type":  "sql",
+        "query":       "SELECT e.full_name, e.clearance_level, e.department, s.salary_max "
+                       "FROM employees e JOIN salary_bands s "
+                       "ON e.clearance_level = s.clearance_level AND e.department = s.department",
+        "explanation": "Join employees with salary_bands to get salary_max per employee",
+    })
+    mock_response.content = join_llm_output
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response)
+
+    def mock_get_raw_entry_multi(source_id: str) -> dict:
+        return multi_raw_entries[source_id]
+
+    with patch(patch_target, return_value=mock_llm), \
+         patch(f"{__name__}._get_raw_entry", side_effect=mock_get_raw_entry_multi), \
+         patch(f"{__name__}.get_manifest_details", return_value="fake multi-table schema"):
+        result_multi: TaskResult = asyncio.run(data_scientist_worker(fake_state, multi_task))
+
+    assert result_multi["success"] is True, f"Multi-table JOIN failed: {result_multi['error']}"
+    out_multi = json.loads(result_multi["output"])
+    assert out_multi["row_count"] >= 1, f"Expected at least 1 row from JOIN, got {out_multi['row_count']}"
+    first_row = out_multi["result_value"][0]
+    assert "full_name" in first_row, f"Result must include full_name, got keys: {list(first_row.keys())}"
+    assert "salary_max" in first_row, f"Result must include salary_max, got keys: {list(first_row.keys())}"
+    assert "employees" in out_multi["table_name"] and "salary_bands" in out_multi["table_name"], \
+        f"table_name must list both tables, got: {out_multi['table_name']}"
+    print(f"PASS: multi-table JOIN returned {out_multi['row_count']} rows: {first_row}")
 
     print("\nPASS: all data_scientist tests passed")
 

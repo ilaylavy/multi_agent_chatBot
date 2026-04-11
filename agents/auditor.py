@@ -100,7 +100,7 @@ def auditor_view(state: AgentState) -> dict:
 
 def _format_plan_block(plan: list) -> str:
     return "\n".join(
-        f"  [{task['task_id']}] {task['description']} (source: {task['source_id']})"
+        f"  [{task['task_id']}] {task['description']} (sources: {', '.join(task['source_ids'])})"
         for task in plan
     )
 
@@ -308,11 +308,11 @@ def test_auditor():
         **AUDITOR_STATE_PASS,
         "plan": [
             {"task_id": "t1", "worker_type": "data_scientist",
-             "description": "Get Noa's clearance level", "source_id": "employees",
+             "description": "Get Noa's clearance level", "source_ids": ["employees"],
              "depends_on": None},
             {"task_id": "t2", "worker_type": "librarian",
              "description": "Find flight class entitlements for the clearance level from t1",
-             "source_id": "travel_policy_2024",
+             "source_ids": ["travel_policy_2024"],
              "depends_on": "t1"},
         ],
         "draft_answer": "Noa is entitled to Business Class on flights over 4 hours.",
@@ -347,10 +347,10 @@ def test_auditor():
         "plan": [
             {"task_id": "t1", "worker_type": "data_scientist",
              "description": "Get Dan Cohen's clearance level from employees",
-             "source_id": "employees", "depends_on": None},
+             "source_ids": ["employees"], "depends_on": None},
             {"task_id": "t2", "worker_type": "librarian",
              "description": "Find flight entitlements for the clearance level from t1",
-             "source_id": "travel_policy_2024", "depends_on": "t1"},
+             "source_ids": ["travel_policy_2024"], "depends_on": "t1"},
         ],
         "sources_used": [
             {"source_id": "employees", "source_type": "csv", "label": "Employee records"},
@@ -390,7 +390,7 @@ def test_auditor():
         "plan": [
             {"task_id": "t1", "worker_type": "data_scientist",
              "description": "Look up the category for Entity A",
-             "source_id": "records", "depends_on": None},
+             "source_ids": ["records"], "depends_on": None},
         ],
         "task_results": {
             "t1": {"task_id": "t1", "worker_type": "data_scientist",

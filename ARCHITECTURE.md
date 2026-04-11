@@ -132,7 +132,7 @@ attempt to process.
 - **Job:** Decompose the user query into tasks. Assign each task to a worker type.
 - **Prompt receives:** `original_query`, `manifest_index` (lightweight), `retry_notes` (on retry only)
 - **Does NOT see:** task results, draft answer, conversation history
-- **Outputs:** Ordered list of Task objects `{ task_id, worker_type, description, source_id }`
+- **Outputs:** Ordered list of Task objects `{ task_id, worker_type, description, source_ids }`
 
 ### Agent 3 — Router (The Dispatcher)
 - **Job:** Receive task list from Planner. Dispatch to correct workers. Run in parallel where possible.
@@ -141,17 +141,17 @@ attempt to process.
 - **Parallel execution:** `asyncio.gather` for independent tasks
 
 ### Agent 4 — Librarian (Unstructured Data Expert)
-- **Job:** Semantic search over PDFs. Return relevant chunks and source references.
-- **Prompt receives:** its single assigned task + manifest detail for its assigned source ONLY
-- **Does NOT see:** Data Scientist results, other PDFs, query history
+- **Job:** Semantic search over one or more PDFs. Return relevant chunks and source references.
+- **Prompt receives:** its assigned task + manifest details for its assigned source(s)
+- **Does NOT see:** Data Scientist results, unassigned PDFs, query history
 - **Retrieval flow:** ChromaDB → top 20 chunks → [Reranker slot, inactive in v1] → top 5 returned
 - **Returns:** `{ chunk_text, source_pdf, page_number, relevance_score }`
 - **Interface:** Written against abstract `RetrieverInterface` — GraphRAG-ready
 
 ### Agent 5 — Data Scientist (Structured Data Expert)
-- **Job:** Query CSV and SQLite sources. Return exact facts and figures.
-- **Prompt receives:** its single assigned task + manifest detail for its assigned table ONLY
-- **Does NOT see:** Librarian results, other tables, query history
+- **Job:** Query one or more CSV and SQLite sources. Return exact facts and figures. Multi-table tasks load all sources into an in-memory SQLite DB for JOINs.
+- **Prompt receives:** its assigned task + manifest details for its assigned table(s)
+- **Does NOT see:** Librarian results, unassigned tables, query history
 - **Never guesses numbers** — if data is missing, reports to Planner immediately
 - **Returns:** `{ result_value, query_used, table_name, row_count }`
 
@@ -223,8 +223,8 @@ class AgentState(TypedDict):
 | Chat Agent     | original_query, conversation_history, final_answer, final_sources    |
 | Planner        | original_query, manifest_context, retry_notes (on retry only)        |
 | Router         | plan                                                                  |
-| Librarian      | assigned task only, manifest detail for assigned source only          |
-| Data Scientist | assigned task only, manifest detail for assigned table only           |
+| Librarian      | assigned task, manifest details for assigned source(s)               |
+| Data Scientist | assigned task, manifest details for assigned table(s)                |
 | Synthesizer    | original_query, plan, task_results, sources_used                     |
 | Auditor        | original_query, plan, draft_answer, sources_used                     |
 

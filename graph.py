@@ -187,10 +187,10 @@ def test_graph_e2e():
     planner_json = json.dumps({"tasks": [
         {"task_id": "t1", "worker_type": "data_scientist",
          "description": "MARKER_PLANNER Get Noa's clearance level from employees table",
-         "source_id": "employees"},
+         "source_ids": ["employees"]},
         {"task_id": "t2", "worker_type": "librarian",
          "description": "Find flight class entitlements for clearance level A",
-         "source_id": "travel_policy_2024"},
+         "source_ids": ["travel_policy_2024"]},
     ]})
 
     synthesizer_json = json.dumps({
@@ -228,6 +228,7 @@ def test_graph_e2e():
         resp.content = content
         llm  = MagicMock()
         llm.ainvoke = AsyncMock(return_value=resp)
+        llm.bind.return_value = llm   # .bind(max_tokens=...) returns self
         return llm
 
     def make_chat_llm_mock() -> MagicMock:
