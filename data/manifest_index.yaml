@@ -14,32 +14,32 @@ pdfs:
     reimbursement procedures based on employee clearance levels.
   contains:
   - flight class entitlements by employee clearance level
-  - advance flight booking requirements and exceptions
+  - advance booking requirements and exceptions
   - hotel accommodation nightly reimbursement limits
   - per diem meal and incidental expense rates
   - expense claim submission deadlines and receipt requirements
-  - manager and finance department approval processes
-  - travel expense reimbursement policies
-  - travel budget control measures
-  - travel policy compliance rules
+  - manager approval conditions for exceptions and upgrades
+  - travel expense reimbursement procedures
+  - policy updates based on Consumer Price Index
+  - rules for last-minute travel bookings
+  - clearance level based travel benefits and restrictions
 - id: hr_handbook_v3
   name: Hr Handbook V3
   summary: This HR Handbook v3 outlines the onboarding process, leave policies, and
     performance review procedures for employees.
   contains:
-  - employee onboarding checklist and procedures
+  - onboarding checklist requirements
   - required employment documents for new hires
-  - IT equipment provisioning and security setup
+  - IT setup and security protocols for new employees
   - leave entitlements by clearance level
-  - annual, sick, and parental leave policies
-  - leave request and approval process
-  - performance review schedule and documentation
+  - annual leave carry-over rules
+  - sick leave policy and medical certificate requirements
+  - parental leave entitlements and options
+  - performance review schedule and process
   - employee performance rating scale
-  - mandatory compliance training requirements
-  - employee role and goal setting during onboarding
 - id: it_security_policy
   name: It Security Policy
-  summary: This IT Security Policy document outlines password requirements, data classification
+  summary: This IT Security Policy outlines password requirements, data classification
     standards, and security incident reporting procedures to ensure corporate information
     protection and compliance.
   contains:
@@ -50,46 +50,74 @@ pdfs:
   - access restrictions based on data classification
   - encryption requirements for restricted data
   - security incident definition and reporting procedures
-  - account lockout and password reset processes
-  - data transmission policies for sensitive information
-  - employee data protection policies
+  - account lockout policies after password expiration
+  - MFA enrollment timelines
+  - reporting unauthorized access incidents
 - id: finance_policy_2024
   name: Finance Policy 2024
-  summary: The Finance Policy 2024 outlines expense approval thresholds, project budget
-    limits by department and clearance level, reimbursement procedures including international
-    expenses and dispute resolution, and vendor payment terms.
+  summary: This Finance Policy 2024 document outlines employee expense approval thresholds,
+    project budget limits by department and clearance level, reimbursement procedures
+    including international expenses and dispute resolution, and vendor payment terms.
   contains:
-  - expense approval thresholds by amount and approvers
-  - receipt requirements and turnaround times for expenses
+  - employee expense approval thresholds by amount
+  - required approvers for expenses
+  - receipt and turnaround time requirements
   - monthly project budget limits by department and clearance level
   - budget overrun approval requirements
-  - reimbursement claim submission deadlines and processing times
-  - cross-references to travel expense policies
+  - expense reimbursement submission and processing procedures
   - international expense pre-approval and currency conversion rules
   - dispute and appeal process for reimbursement claims
   - vendor invoice payment terms and early payment discount criteria
 tables:
 - id: employees
   name: Employees
-  summary: This table contains information about employees, including their personal
-    details, department, and managerial relationships.
+  summary: This table contains employee information including personal details, department,
+    security clearance, hire date, and managerial hierarchy.
   contains:
   - employee names
-  - departments
-  - clearance levels
+  - employee email addresses
+  - department assignments
+  - security clearance levels
   - hire dates
-  - manager relationships
+  - manager-subordinate relationships
+  - organizational hierarchy
 - id: salary_bands
   name: Salary Bands
-  summary: This table contains information about departments, their clearance levels,
-    and salary ranges.
+  summary: This table lists salary ranges by clearance level and department within
+    an organization.
   contains:
-  - salary ranges by clearance level and department
+  - salary ranges
+  - clearance levels
+  - department salary data
+  - minimum salaries
+  - maximum salaries
+  - salary currency
+  - organizational departments
+  - security clearance salary bands
 - id: training_records
   name: Training Records
-  summary: This table records employee training details including completion and expiry
-    dates, status, and scores.
+  summary: This table records employee training completion details including training
+    names, dates, status, and scores.
+  contains:
+  - employee training records
+  - training completion dates
+  - training expiry dates
+  - training status tracking
+  - employee training scores
+  - training course names
+  - employee training history
 - id: projects
   name: Projects
-  summary: This table contains information about various projects, including their
-    details, budget, and status.
+  summary: This table contains detailed information about various projects including
+    their identifiers, names, departments, lead employees, budgets, expenditures,
+    statuses, and timelines.
+  contains:
+  - project identifiers
+  - project names
+  - department assignments
+  - project lead employee IDs
+  - project budgets
+  - project expenditures
+  - project statuses
+  - project start dates
+  - project end dates
