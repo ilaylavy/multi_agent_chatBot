@@ -32,10 +32,14 @@ retrieves information from one or more sources listed in the manifest.
 Routing: assign worker_type by source type in the manifest. PDF sources use \
 "librarian". CSV or SQLite sources use "data_scientist".
 
-Multi-source tasks: when a task requires joining or comparing data across \
-multiple tables, assign all relevant source IDs in a single task. When a task \
-needs to search across multiple PDFs, list all relevant PDF source IDs. \
-Use single-source tasks for independent lookups.
+Multi-source tasks: when a task needs data from multiple sources and those \
+sources share the same worker_type, combine them in a single task — \
+source_ids: ["table1", "table2", "table3"]. The worker can query all of \
+them together. This applies to any number of same-type sources: tables that \
+need to be combined, compared, or cross-referenced, or PDFs that need to be \
+searched together. Only split into separate tasks when sources use different \
+worker types (e.g. one PDF and one CSV — these cannot share a runtime) or \
+when the information needed is truly independent.
 
 Dependencies: if a task requires a value that must first be retrieved from \
 another source, create that retrieval as a separate task and set depends_on. \
@@ -51,6 +55,7 @@ Respond with ONLY JSON — no explanation, no markdown:
     "source_assignments": [
       {"info": "...", "source_ids": ["..."], "worker_type": "...", "justification": "..."}
     ],
+    "can_combine": "Before splitting: for source_assignments that share the same worker_type, can they be combined into a single task? If yes, merge them.",
     "dependencies": ["e.g. t2 needs t1 because ..."]
   },
   "tasks": [
@@ -257,32 +262,25 @@ def test_planner():
             assert "sorry, I cannot help with that" in str(exc)
             print(f"PASS: ValueError raised with raw output on bad JSON")
 
-    # ── Test 5: cross-table query produces ≥2 tasks with a dependency ──
+    # ── Test 5: cross-table query with same worker_type → single multi-source task ──
     cross_table_output = json.dumps({
         "reasoning": {
-            "information_needed": ["highest salary_max from salary_bands", "employee name matching that band"],
+            "information_needed": ["employee with the highest salary by joining employees and salary_bands"],
             "source_assignments": [
-                {"info": "highest salary_max", "source_ids": ["salary_bands"], "worker_type": "data_scientist",
-                 "justification": "salary_bands contains min/max salary ranges"},
-                {"info": "employee name", "source_ids": ["employees"], "worker_type": "data_scientist",
-                 "justification": "employees table has names and clearance levels"}
+                {"info": "employee name and highest salary", "source_ids": ["salary_bands", "employees"],
+                 "worker_type": "data_scientist",
+                 "justification": "both tables share clearance_level/department keys and can be JOINed"}
             ],
-            "dependencies": ["t2 needs t1 to know which clearance_level/department to match"]
+            "can_combine": "salary_bands and employees are both data_scientist sources — combining into one task for a JOIN.",
+            "dependencies": []
         },
         "tasks": [
             {
                 "task_id":     "t1",
                 "worker_type": "data_scientist",
-                "description": "Find the clearance_level and department with the highest salary_max from salary_bands",
-                "source_ids":  ["salary_bands"],
+                "description": "JOIN employees and salary_bands to find the employee with the highest salary_max",
+                "source_ids":  ["salary_bands", "employees"],
                 "depends_on":  None,
-            },
-            {
-                "task_id":     "t2",
-                "worker_type": "data_scientist",
-                "description": "Find the employee name in employees whose clearance_level and department match t1 result",
-                "source_ids":  ["employees"],
-                "depends_on":  "t1",
             },
         ]
     })
@@ -307,17 +305,15 @@ tables:
         result_cross = asyncio.run(planner_node(cross_state))
 
     plan = result_cross["plan"]
-    assert len(plan) >= 2, \
-        f"Cross-table query must produce at least 2 tasks, got {len(plan)}"
-    all_sids = {sid for t in plan for sid in t["source_ids"]}
-    assert len(all_sids) >= 2, \
-        f"Cross-table plan must reference at least 2 different sources, got {all_sids}"
-    deps = [t["depends_on"] for t in plan if t["depends_on"] is not None]
-    assert len(deps) >= 1, \
-        "Cross-table plan must have at least one task with a dependency"
-    assert plan[1]["depends_on"] == "t1", \
-        f"Second task must depend on t1, got depends_on={plan[1]['depends_on']!r}"
-    print(f"PASS: cross-table query produces {len(plan)} tasks across {all_sids} with dependency chain")
+    assert len(plan) == 1, \
+        f"Same-type cross-table query must produce 1 multi-source task, got {len(plan)}"
+    assert len(plan[0]["source_ids"]) == 2, \
+        f"Multi-source task must have 2 source_ids, got {plan[0]['source_ids']}"
+    assert plan[0]["depends_on"] is None, \
+        f"Multi-source task must have no dependency, got depends_on={plan[0]['depends_on']!r}"
+    assert plan[0]["worker_type"] == "data_scientist", \
+        f"Multi-source table task must use data_scientist, got {plan[0]['worker_type']}"
+    print(f"PASS: cross-table query produces single multi-source task with source_ids={plan[0]['source_ids']}")
 
     # ── Test 6: PDF query uses librarian, table query uses data_scientist, reasoning has justifications ──
     mixed_output = json.dumps({
@@ -491,6 +487,59 @@ pdfs:
     assert plan_direct[0]["depends_on"] is None, \
         "Direct task must have no dependency"
     print("PASS: direct query needing no property lookup produces single task with no dependency")
+
+    # ── Test 9: multi-source single task round-trip ──────────────
+    # Validates that planner_node parsing correctly handles a task
+    # with multiple source_ids (the isinstance check on line 128).
+    multi_src_output = json.dumps({
+        "reasoning": {
+            "information_needed": ["employees matched to their salary bands"],
+            "source_assignments": [
+                {"info": "employees and their salary bands", "source_ids": ["employees", "salary_bands"],
+                 "worker_type": "data_scientist",
+                 "justification": "both are tables sharing clearance_level key — JOINable in one query"}
+            ],
+            "can_combine": "employees and salary_bands are both data_scientist sources — merging into one task.",
+            "dependencies": []
+        },
+        "tasks": [
+            {"task_id": "t1", "worker_type": "data_scientist",
+             "description": "JOIN employees and salary_bands to find employees with the highest salary in their band",
+             "source_ids": ["employees", "salary_bands"], "depends_on": None},
+        ]
+    })
+    mock_response_multi = MagicMock()
+    mock_response_multi.content = multi_src_output
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response_multi)
+
+    multi_src_state = {
+        **PLANNER_STATE,
+        "original_query": "Which employees have the highest salary in their band?",
+        "manifest_context": """
+pdfs: []
+tables:
+  - id: employees
+    summary: Master employee list with names, departments, and clearance levels.
+  - id: salary_bands
+    summary: Salary bands by department and clearance level with min/max ranges.
+""",
+    }
+
+    with patch(patch_target, return_value=mock_llm):
+        result_multi = asyncio.run(planner_node(multi_src_state))
+
+    plan_multi = result_multi["plan"]
+    assert len(plan_multi) == 1, \
+        f"Multi-source query must produce exactly 1 task, got {len(plan_multi)}"
+    assert len(plan_multi[0]["source_ids"]) == 2, \
+        f"Task must have 2 source_ids, got {plan_multi[0]['source_ids']}"
+    assert set(plan_multi[0]["source_ids"]) == {"employees", "salary_bands"}, \
+        f"Task must reference both sources, got {plan_multi[0]['source_ids']}"
+    assert plan_multi[0]["depends_on"] is None, \
+        f"Multi-source task must have no dependency, got {plan_multi[0]['depends_on']!r}"
+    assert plan_multi[0]["worker_type"] == "data_scientist", \
+        f"Table task must use data_scientist, got {plan_multi[0]['worker_type']}"
+    print("PASS: multi-source single task round-trip — parsing handles source_ids array correctly")
 
     print("\nPASS: all planner tests passed")
 
