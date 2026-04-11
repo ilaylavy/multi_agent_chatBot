@@ -326,6 +326,70 @@ def _extract_contexts(result: dict) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
+# 3b. Build debug trace for ragas_results.json
+# ---------------------------------------------------------------------------
+
+_CHUNK_TEXT_LIMIT = 500
+
+
+def _truncate_chunks(chunks: list) -> list:
+    """Truncate chunk_text fields in a list of chunk dicts."""
+    for chunk in chunks:
+        if isinstance(chunk, dict) and "chunk_text" in chunk:
+            text = chunk["chunk_text"]
+            if len(text) > _CHUNK_TEXT_LIMIT:
+                chunk["chunk_text"] = text[:_CHUNK_TEXT_LIMIT] + "..."
+    return chunks
+
+
+def _build_debug_trace(trace: dict) -> dict:
+    """Build a size-controlled debug trace from the API trace response."""
+    parsed_task_results = {}
+    for tid, tr in trace.get("task_results", {}).items():
+        entry = {
+            "worker_type": tr.get("worker_type"),
+            "success": tr.get("success"),
+            "error": tr.get("error"),
+        }
+        try:
+            output = json.loads(tr["output"]) if isinstance(tr.get("output"), str) else tr.get("output")
+        except (json.JSONDecodeError, TypeError):
+            output = tr.get("output")
+
+        if isinstance(output, dict):
+            if "selected_chunks" in output:
+                _truncate_chunks(output["selected_chunks"])
+            if "chunks" in output:
+                _truncate_chunks(output["chunks"])
+
+        entry["output"] = output
+        parsed_task_results[tid] = entry
+
+    planner_reasoning = trace.get("planner_reasoning")
+    if isinstance(planner_reasoning, str):
+        try:
+            planner_reasoning = json.loads(planner_reasoning)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    return {
+        "chat_intent": trace.get("chat_intent", ""),
+        "rewritten_query": trace.get("rewritten_query", ""),
+        "query_sent_to_planner": trace.get("query_sent_to_planner"),
+        "planner_reasoning": planner_reasoning,
+        "plan": trace.get("plan"),
+        "task_results": parsed_task_results,
+        "synthesizer_output": trace.get("synthesizer_output", ""),
+        "audit_verdict": trace.get("audit_verdict"),
+        "audit_notes": trace.get("audit_notes"),
+        "retry_count": trace.get("retry_count", 0),
+        "retry_history": trace.get("retry_history", []),
+        "step_timings": trace.get("step_timings", {}),
+        "chat_formatted_response": trace.get("chat_formatted_response"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # 4. RAGAS evaluation — all four metrics
 # ---------------------------------------------------------------------------
 
@@ -616,6 +680,7 @@ async def _run_all_queries(question_nums: set[int] | None = None) -> List[dict]:
                 "plan": trace.get("plan", []),
                 "planner_reasoning": trace.get("planner_reasoning"),
                 "has_task_failures": any(not t["success"] for t in task_details),
+                "trace": _build_debug_trace(trace),
             }
             results.append(result)
 
@@ -646,6 +711,7 @@ async def _run_all_queries(question_nums: set[int] | None = None) -> List[dict]:
                 "plan": [],
                 "planner_reasoning": None,
                 "has_task_failures": False,
+                "trace": None,
             })
 
     return results
