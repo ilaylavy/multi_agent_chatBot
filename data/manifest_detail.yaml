@@ -11,60 +11,87 @@ pdfs:
   type: pdf
   pages: 4
   sections:
-  - Flight Class Entitlements by Clearance Level
-  - Booking Rules
-  - Hotel Nightly Allowances
-  - Per Diem Rates
-  - Expense Reimbursement Process
+  - 'Section 1: Flight Class Entitlements by Clearance Level'
+  - 'Section 2: Booking Rules'
+  - 'Section 3: Hotel Nightly Allowances'
+  - 'Section 4: Per Diem Rates'
+  - 'Section 5: Expense Reimbursement Process'
   tags:
-  - travel policy
-  - flight entitlements
+  - corporate travel policy
+  - flight class entitlements
+  - clearance levels
+  - booking rules
   - hotel allowances
   - per diem rates
   - expense reimbursement
+  - travel receipts
+  - travel expense claims
+  - manager approval
 - id: hr_handbook_v3
   filename: hr_handbook_v3.pdf
   type: pdf
   pages: 4
   sections:
-  - Onboarding
-  - Leave Policy
-  - Performance Reviews
+  - 'Chapter 1: Onboarding'
+  - First Week Checklist
+  - Required Documents
+  - IT Setup
+  - 'Chapter 2: Leave Policy'
+  - Annual Leave
+  - Sick Leave
+  - Parental Leave
+  - 'Chapter 3: Performance Reviews'
+  - Rating Scale
   tags:
-  - HR policies
-  - onboarding process
-  - leave entitlements
+  - HR handbook
+  - employee onboarding
+  - leave policy
+  - annual leave
+  - sick leave
+  - parental leave
   - performance reviews
-  - employee compliance
+  - employee ratings
+  - IT setup
+  - compliance training
 - id: it_security_policy
   filename: it_security_policy.pdf
   type: pdf
   pages: 5
   sections:
-  - Password Policy
-  - Data Classification
-  - Security Incident Reporting
+  - 'Section 1: Password Policy'
+  - 'Section 2: Data Classification'
+  - 'Section 3: Security Incident Reporting'
   tags:
-  - IT security
-  - password policy
-  - data classification
+  - IT security policy
+  - password requirements
   - multi-factor authentication
+  - data classification
   - security incident reporting
+  - corporate data protection
+  - access control
+  - encryption
+  - password rotation
+  - incident management
 - id: finance_policy_2024
   filename: finance_policy_2024.pdf
   type: pdf
   pages: 4
   sections:
-  - Expense Approval Thresholds
-  - Project Budget Limits by Department and Clearance Level
-  - Reimbursement Procedures
-  - Vendor Payment Terms
+  - 'Section 1: Expense Approval Thresholds'
+  - 'Section 2: Project Budget Limits by Department and Clearance Level'
+  - 'Section 3: Reimbursement Procedures'
+  - 'Section 4: Vendor Payment Terms'
   tags:
-  - finance policy
   - expense approval
   - budget limits
-  - reimbursement
-  - vendor payment
+  - reimbursement procedures
+  - vendor payment terms
+  - finance policy
+  - employee expenses
+  - project budgets
+  - international expenses
+  - expense dispute
+  - payment terms
 tables:
 - id: salary_bands
   filename: salary_bands.sqlite

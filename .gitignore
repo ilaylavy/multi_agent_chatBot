@@ -14,6 +14,7 @@ build/
 data/pdfs/
 data/tables/
 data/chroma_db/
+tests/ragas_results.json
 
 # Test fixtures — committed to git (NOT gitignored)
 !tests/fixtures/tables/
