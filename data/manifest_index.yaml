@@ -14,77 +14,75 @@ pdfs:
     reimbursement procedures based on employee clearance levels.
   contains:
   - flight class entitlements by employee clearance level
-  - advance booking requirements and exceptions
+  - advance flight booking requirements and exceptions
   - hotel accommodation nightly reimbursement limits
   - per diem meal and incidental expense rates
   - expense claim submission deadlines and receipt requirements
-  - manager approval conditions for exceptions and upgrades
-  - travel expense reimbursement procedures
-  - policy updates based on Consumer Price Index
-  - rules for last-minute travel bookings
+  - manager and finance department approval processes
+  - travel expense reimbursement policies
   - clearance level based travel benefits and restrictions
+  - policy update schedule based on Consumer Price Index
 - id: hr_handbook_v3
   name: Hr Handbook V3
   summary: This HR Handbook v3 outlines the onboarding process, leave policies, and
     performance review procedures for employees.
   contains:
-  - onboarding checklist requirements
-  - required employment documents for new hires
-  - IT setup and security protocols for new employees
+  - employee onboarding checklist and procedures
+  - required employment documentation for new hires
+  - IT equipment provisioning and security setup
   - leave entitlements by clearance level
-  - annual leave carry-over rules
-  - sick leave policy and medical certificate requirements
-  - parental leave entitlements and options
-  - performance review schedule and process
+  - annual, sick, and parental leave policies
+  - leave request and approval process
+  - performance review schedule and documentation
   - employee performance rating scale
+  - mandatory compliance training requirements
+  - employee role expectation meetings
 - id: it_security_policy
   name: It Security Policy
-  summary: This IT Security Policy outlines password requirements, data classification
+  summary: This IT Security Policy document outlines password requirements, data classification
     standards, and security incident reporting procedures to ensure corporate information
     protection and compliance.
   contains:
-  - password complexity and length requirements
-  - password rotation and history rules
+  - password complexity and rotation rules
   - multi-factor authentication enforcement
-  - data classification categories and handling rules
+  - data classification levels and handling requirements
   - access restrictions based on data classification
   - encryption requirements for restricted data
   - security incident definition and reporting procedures
-  - account lockout policies after password expiration
+  - account lockout and password history policies
   - MFA enrollment timelines
-  - reporting unauthorized access incidents
+  - data transmission security policies
+  - incident escalation and notification protocols
 - id: finance_policy_2024
   name: Finance Policy 2024
-  summary: This Finance Policy 2024 document outlines employee expense approval thresholds,
+  summary: This Finance Policy 2024 document outlines expense approval thresholds,
     project budget limits by department and clearance level, reimbursement procedures
     including international expenses and dispute resolution, and vendor payment terms.
   contains:
-  - employee expense approval thresholds by amount
+  - expense approval thresholds by amount
   - required approvers for expenses
   - receipt and turnaround time requirements
   - monthly project budget limits by department and clearance level
-  - budget overrun approval requirements
-  - expense reimbursement submission and processing procedures
-  - international expense pre-approval and currency conversion rules
+  - budget overrun approval process
+  - expense reimbursement submission and processing
+  - international expense pre-approval and currency conversion
   - dispute and appeal process for reimbursement claims
-  - vendor invoice payment terms and early payment discount criteria
+  - vendor invoice payment terms and early payment discounts
 tables:
 - id: employees
   name: Employees
   summary: This table contains employee information including personal details, department,
-    security clearance, hire date, and managerial hierarchy.
+    security clearance, hire date, and managerial relationships.
   contains:
   - employee names
-  - employee email addresses
+  - employee emails
   - department assignments
   - security clearance levels
   - hire dates
   - manager-subordinate relationships
-  - organizational hierarchy
 - id: salary_bands
   name: Salary Bands
-  summary: This table lists salary ranges by clearance level and department within
-    an organization.
+  summary: This table contains salary ranges by clearance level and department.
   contains:
   - salary ranges
   - clearance levels
@@ -103,21 +101,20 @@ tables:
   - training completion dates
   - training expiry dates
   - training status tracking
-  - employee training scores
-  - training course names
+  - training scores
   - employee training history
+  - compliance training data
 - id: projects
   name: Projects
-  summary: This table contains detailed information about various projects including
-    their identifiers, names, departments, lead employees, budgets, expenditures,
-    statuses, and timelines.
+  summary: This table contains detailed information about company projects including
+    their budgets, timelines, departments, and lead employees.
   contains:
   - project identifiers
   - project names
   - department assignments
   - project lead employee IDs
   - project budgets
-  - project expenditures
+  - budget expenditures
   - project statuses
   - project start dates
   - project end dates

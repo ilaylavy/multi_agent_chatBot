@@ -11,22 +11,22 @@ pdfs:
   type: pdf
   pages: 4
   sections:
-  - Flight Class Entitlements by Clearance Level
-  - Booking Rules
-  - Hotel Nightly Allowances
-  - Per Diem Rates
-  - Expense Reimbursement Process
+  - 'Section 1: Flight Class Entitlements by Clearance Level'
+  - 'Section 2: Booking Rules'
+  - 'Section 3: Hotel Nightly Allowances'
+  - 'Section 4: Per Diem Rates'
+  - 'Section 5: Expense Reimbursement Process'
   tags:
   - corporate travel policy
   - flight class entitlements
   - clearance levels
+  - booking rules
   - hotel allowances
   - per diem rates
   - expense reimbursement
-  - travel booking rules
-  - travel expenses
-  - manager approval
   - travel receipts
+  - manager approval
+  - travel expense claims
 - id: hr_handbook_v3
   filename: hr_handbook_v3.pdf
   type: pdf
@@ -70,8 +70,8 @@ pdfs:
   - corporate data protection
   - access control
   - encryption
-  - password rotation
-  - incident management
+  - incident response
+  - information security
 - id: finance_policy_2024
   filename: finance_policy_2024.pdf
   type: pdf
@@ -96,7 +96,7 @@ tables:
 - id: salary_bands
   filename: salary_bands.sqlite
   type: sqlite
-  base_path: data/tables/
+  base_path: tests/fixtures/tables/
   row_count_approx: 16
   columns:
   - name: id
@@ -107,7 +107,7 @@ tables:
     description: Security clearance level associated with the salary range
   - name: department
     type: string
-    description: Department within the organization
+    description: Department name within the organization
   - name: salary_min
     type: integer
     description: Minimum salary for the given clearance level and department
@@ -124,7 +124,7 @@ tables:
 - id: employees
   filename: employees.csv
   type: csv
-  base_path: data/tables/
+  base_path: tests/fixtures/tables/
   row_count_approx: 10
   columns:
   - name: employee_id
@@ -147,13 +147,13 @@ tables:
     description: Date when the employee was hired
   - name: manager_id
     type: float
-    description: Employee ID of the manager supervising this employee, if any
+    description: Employee ID of the employee's manager, if applicable
   relationships:
-  - manager_id links to employee.employee_id
+  - manager_id links to employee_id in the same table
 - id: training_records
   filename: training_records.csv
   type: csv
-  base_path: data/tables/
+  base_path: tests/fixtures/tables/
   row_count_approx: 25
   columns:
   - name: record_id
@@ -182,7 +182,7 @@ tables:
 - id: projects
   filename: projects.csv
   type: csv
-  base_path: data/tables/
+  base_path: tests/fixtures/tables/
   row_count_approx: 12
   columns:
   - name: project_id
