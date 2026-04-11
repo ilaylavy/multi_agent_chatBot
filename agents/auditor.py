@@ -159,6 +159,14 @@ async def auditor_node(state: AgentState) -> dict:
             f"Missing key in LLM output: {exc}\nRaw output: {response.content}"
         ) from exc
 
+    logger.debug(
+        "[%s] Auditor — verdict=%s notes=%s attempt=%d",
+        state.get("session_id", "?"),
+        verdict,
+        notes[:200] if notes else "(none)",
+        state["retry_count"] + 1,
+    )
+
     # Append to retry_history on every audit (PASS or FAIL)
     history = list(state.get("retry_history", []))
     history.append({

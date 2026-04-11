@@ -306,8 +306,12 @@ def _extract_contexts(result: dict) -> List[str]:
             continue
 
         if tr.get("worker_type") == "librarian":
-            if isinstance(output, list):
-                for chunk in output:
+            # New format: dict with "selected_chunks"; legacy: plain list
+            chunk_list = output
+            if isinstance(output, dict) and "selected_chunks" in output:
+                chunk_list = output["selected_chunks"]
+            if isinstance(chunk_list, list):
+                for chunk in chunk_list:
                     if isinstance(chunk, dict) and "chunk_text" in chunk:
                         contexts.append(chunk["chunk_text"])
 

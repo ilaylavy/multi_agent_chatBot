@@ -326,9 +326,15 @@ async def data_scientist_worker(
     """
     source_ids = task["source_ids"]
 
+    # ── Extract injected prerequisite context (if any) ────────────
+    _PREREQ_MARKER = "\n\n[Prerequisite result from"
+    desc = task["description"]
+    injected_context = desc[desc.index(_PREREQ_MARKER):] if _PREREQ_MARKER in desc else None
+
     # ── Manifest ──────────────────────────────────────────────────
     manifest_details = get_manifest_details(source_ids)
     raw_entries      = [_get_raw_entry(sid) for sid in source_ids]
+    tables_loaded    = [e.get("table_name", e.get("filename", "?")) for e in raw_entries]
 
     view = data_scientist_view(state, task, manifest_details)
 
@@ -355,6 +361,11 @@ async def data_scientist_worker(
         filename     = raw_entry.get("filename", "")
         table_name   = raw_entry.get("table_name", filename)
         file_path    = _resolve_file_path(raw_entry)
+    logger.debug(
+        "[%s] DataScientist — table_names=%s",
+        task["task_id"],
+        [e.get("table_name", e.get("filename", "?")) for e in raw_entries],
+    )
 
     # ── LLM query generation ──────────────────────────────────────
     user_message = _USER_TEMPLATE.format(
@@ -380,8 +391,13 @@ async def data_scientist_worker(
 
     # Log reasoning for trace visibility (not stored in state)
     reasoning = data.get("reasoning")
-    if reasoning:
-        logger.info("Data Scientist reasoning: %s", json.dumps(reasoning, indent=2))
+    logger.debug(
+        "[%s] DataScientist LLM parse — reasoning=%s query_type=%s query=%s",
+        task["task_id"],
+        json.dumps(reasoning, indent=2) if reasoning else "(none)",
+        query_type,
+        query,
+    )
 
     # ── Pre-execution validation ─────────────────────────────────
     if multi_source:
@@ -439,6 +455,7 @@ async def data_scientist_worker(
         else:
             raise ValueError(f"Unknown query_type '{query_type}' — must be 'pandas' or 'sql'")
     except Exception as exc:  # noqa: BLE001 — intentional broad catch for sandboxing
+        logger.debug("[%s] DataScientist exec error — %s", task["task_id"], exc)
         return TaskResult(
             task_id=task["task_id"],
             worker_type="data_scientist",
@@ -446,6 +463,8 @@ async def data_scientist_worker(
             success=False,
             error=f"Query execution failed: {exc}",
         )
+
+    logger.debug("[%s] DataScientist exec — row_count=%d", task["task_id"], row_count)
 
     if row_count == 0:
         return TaskResult(
@@ -457,10 +476,13 @@ async def data_scientist_worker(
         )
 
     output = json.dumps(_make_json_safe({
-        "result_value": result_value,
-        "query_used":   query,
-        "table_name":   table_name,
-        "row_count":    row_count,
+        "result_value":    result_value,
+        "query_used":      query,
+        "table_name":      table_name,
+        "row_count":       row_count,
+        "reasoning":       reasoning,
+        "tables_loaded":   tables_loaded,
+        "injected_context": injected_context,
     }))
 
     return TaskResult(

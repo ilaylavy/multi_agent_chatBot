@@ -46,6 +46,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Enable DEBUG only for our own modules — keeps third-party noise (httpcore,
+# openai, langsmith, urllib3, httpx …) at INFO/WARNING.
+for _mod in ("agents", "core", "__main__"):
+    logging.getLogger(_mod).setLevel(logging.DEBUG)
+
 
 # ---------------------------------------------------------------------------
 # Startup — LangSmith tracing

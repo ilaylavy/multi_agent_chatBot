@@ -222,6 +222,10 @@
 
     .task-list { margin: 0.4rem 0 0 0; display: flex; flex-direction: column; gap: 0.35rem; }
     .task-item { border: 1px solid var(--pico-muted-border-color); border-radius: 4px; padding: 0.35rem 0.5rem; font-size: 0.78rem; }
+    details.task-item > summary { cursor: pointer; list-style: none; }
+    details.task-item > summary::-webkit-details-marker { display: none; }
+    details.task-item > summary::before { content: '\25B6  '; font-size: 0.6rem; }
+    details.task-item[open] > summary::before { content: '\25BC  '; }
     .task-header { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.2rem; }
     .task-badge { display: inline-block; padding: 0.1em 0.45em; border-radius: 999px; font-size: 0.68rem; font-weight: 700; color: #fff; flex-shrink: 0; }
     .task-badge-ok  { background: #16a34a; }
@@ -850,26 +854,183 @@ function appendAssistantBubble(data, query) {
         const badgeClass = tr.success ? 'task-badge-ok' : 'task-badge-err';
         const badgeLabel = tr.success ? 'OK' : 'FAIL';
 
-        const item = document.createElement('div');
-        item.className = 'task-item';
-        item.innerHTML = `
-          <div class="task-header">
-            <span class="task-badge ${badgeClass}">${badgeLabel}</span>
-            <strong>${esc(tr.task_id)}</strong>
-            <span style="color:var(--pico-muted-color)">${esc(tr.worker_type)}</span>
-          </div>
-        `;
+        // Find task description from plan
+        const planTask = (t.plan || []).find(p => p.task_id === tid);
+        const taskDesc = planTask ? planTask.description : '';
 
-        const detail = document.createElement('div');
-        if (tr.success) {
-          detail.className = 'task-output';
-          detail.textContent = tr.output || '';
-        } else {
-          detail.className = 'task-error';
-          detail.textContent = tr.error || '(unknown error)';
+        // Collapsible task item
+        const taskDetails = document.createElement('details');
+        taskDetails.className = 'task-item';
+
+        const summary = document.createElement('summary');
+        summary.className = 'task-header';
+        summary.innerHTML = `
+          <span class="task-badge ${badgeClass}">${badgeLabel}</span>
+          <strong>${esc(tr.task_id)}</strong>
+          <span style="color:var(--pico-muted-color)">${esc(tr.worker_type)}</span>
+        `;
+        taskDetails.appendChild(summary);
+
+        const body = document.createElement('div');
+        body.style.marginTop = '0.3rem';
+
+        // Task description (including injected prerequisite context)
+        if (taskDesc) {
+          const descDiv = document.createElement('div');
+          descDiv.style.cssText = 'margin-bottom:0.3rem;white-space:pre-wrap;word-break:break-word;';
+          descDiv.innerHTML = '<strong>Description:</strong> ' + esc(taskDesc);
+          body.appendChild(descDiv);
         }
-        item.appendChild(detail);
-        taskList.appendChild(item);
+
+        if (tr.success) {
+          let parsed = null;
+          try { parsed = JSON.parse(tr.output); } catch(e) { /* fall through to raw */ }
+
+          if (tr.worker_type === 'librarian' && parsed && parsed.selected_chunks) {
+            // ── Librarian: structured output with diagnostics ──
+            if (parsed.chromadb_query) {
+              const qDiv = document.createElement('div');
+              qDiv.innerHTML = '<strong>ChromaDB query:</strong> <code>' + esc(parsed.chromadb_query) + '</code>';
+              body.appendChild(qDiv);
+            }
+            const metaDiv = document.createElement('div');
+            metaDiv.innerHTML =
+              '<strong>Chunks retrieved:</strong> ' + (parsed.chunks_retrieved ?? '—')
+              + ' &middot; <strong>LLM filter:</strong> ' + (parsed.llm_filter_applied ? 'applied' : 'skipped')
+              + ' &middot; <strong>Top score:</strong> ' + (parsed.top_score != null ? parsed.top_score.toFixed(4) : '—');
+            body.appendChild(metaDiv);
+
+            const chunkPreviews = parsed.chunks || [];
+            if (chunkPreviews.length) {
+              const chunkHeader = document.createElement('div');
+              chunkHeader.style.marginTop = '0.3rem';
+              chunkHeader.innerHTML = '<strong>Reranked chunks (' + chunkPreviews.length + '):</strong>';
+              body.appendChild(chunkHeader);
+
+              chunkPreviews.forEach((chunk, i) => {
+                const chunkDiv = document.createElement('div');
+                chunkDiv.style.cssText = 'margin-top:0.2rem;padding:0.3rem;border:1px solid var(--pico-muted-border-color);border-radius:4px;';
+                chunkDiv.innerHTML =
+                  '<div style="font-size:0.72rem;color:var(--pico-muted-color)">'
+                  + 'Chunk ' + (i+1) + ' &middot; score: ' + (chunk.score != null ? chunk.score : '—')
+                  + '</div>';
+                const textDiv = document.createElement('div');
+                textDiv.className = 'task-output';
+                textDiv.style.marginTop = '0.15rem';
+                textDiv.textContent = chunk.text || '';
+                chunkDiv.appendChild(textDiv);
+                body.appendChild(chunkDiv);
+              });
+            }
+
+            // Selected chunks (after LLM filter)
+            const selected = parsed.selected_chunks || [];
+            if (selected.length) {
+              const selHeader = document.createElement('div');
+              selHeader.style.marginTop = '0.3rem';
+              selHeader.innerHTML = '<strong>Selected chunks after LLM filter (' + selected.length + '):</strong>';
+              body.appendChild(selHeader);
+
+              selected.forEach((chunk, i) => {
+                const chunkDiv = document.createElement('div');
+                chunkDiv.style.cssText = 'margin-top:0.2rem;padding:0.3rem;border:1px solid var(--pico-muted-border-color);border-radius:4px;';
+                chunkDiv.innerHTML =
+                  '<div style="font-size:0.72rem;color:var(--pico-muted-color)">'
+                  + 'Chunk ' + (i+1) + ' &middot; score: ' + (chunk.relevance_score != null ? chunk.relevance_score : '—')
+                  + ' &middot; ' + esc(chunk.source_pdf || '?') + ' p.' + (chunk.page_number != null ? chunk.page_number : '?')
+                  + '</div>';
+                const textDiv = document.createElement('div');
+                textDiv.className = 'task-output';
+                textDiv.style.marginTop = '0.15rem';
+                textDiv.textContent = chunk.chunk_text || '';
+                chunkDiv.appendChild(textDiv);
+                body.appendChild(chunkDiv);
+              });
+            }
+
+          } else if (tr.worker_type === 'data_scientist' && parsed && typeof parsed === 'object') {
+            // ── Data Scientist: structured result ──
+            if (parsed.reasoning) {
+              const rsnDetails = document.createElement('details');
+              rsnDetails.style.marginBottom = '0.3rem';
+              rsnDetails.innerHTML = '<summary style="cursor:pointer;font-size:0.78rem"><strong>Reasoning</strong></summary>';
+              const rsnPre = document.createElement('pre');
+              rsnPre.style.cssText = 'margin-top:0.1rem;max-height:200px;overflow:auto;font-size:0.72rem;';
+              rsnPre.textContent = typeof parsed.reasoning === 'string'
+                ? parsed.reasoning
+                : JSON.stringify(parsed.reasoning, null, 2);
+              rsnDetails.appendChild(rsnPre);
+              body.appendChild(rsnDetails);
+            }
+            if (parsed.tables_loaded && parsed.tables_loaded.length) {
+              const tlDiv = document.createElement('div');
+              tlDiv.innerHTML = '<strong>Tables loaded:</strong> ' + parsed.tables_loaded.map(t => esc(t)).join(', ');
+              body.appendChild(tlDiv);
+            }
+            if (parsed.query_used) {
+              const qDiv = document.createElement('div');
+              qDiv.innerHTML = '<strong>Query:</strong> <code>' + esc(parsed.query_used) + '</code>';
+              body.appendChild(qDiv);
+            }
+            if (parsed.table_name) {
+              const tDiv = document.createElement('div');
+              tDiv.innerHTML = '<strong>Table:</strong> ' + esc(parsed.table_name);
+              body.appendChild(tDiv);
+            }
+            if (parsed.row_count != null) {
+              const rDiv = document.createElement('div');
+              rDiv.innerHTML = '<strong>Row count:</strong> ' + parsed.row_count;
+              body.appendChild(rDiv);
+            }
+            if (parsed.result_value != null) {
+              const vDiv = document.createElement('div');
+              vDiv.innerHTML = '<strong>Result:</strong>';
+              const pre = document.createElement('pre');
+              pre.style.cssText = 'margin-top:0.1rem;max-height:200px;overflow:auto;font-size:0.72rem;';
+              pre.textContent = typeof parsed.result_value === 'string'
+                ? parsed.result_value
+                : JSON.stringify(parsed.result_value, null, 2);
+              vDiv.appendChild(pre);
+              body.appendChild(vDiv);
+            }
+            if (parsed.injected_context) {
+              const icDetails = document.createElement('details');
+              icDetails.style.marginTop = '0.3rem';
+              icDetails.innerHTML = '<summary style="cursor:pointer;font-size:0.78rem"><strong>Injected prerequisite context</strong></summary>';
+              const icPre = document.createElement('pre');
+              icPre.style.cssText = 'margin-top:0.1rem;max-height:150px;overflow:auto;font-size:0.72rem;white-space:pre-wrap;word-break:break-word;';
+              icPre.textContent = parsed.injected_context;
+              icDetails.appendChild(icPre);
+              body.appendChild(icDetails);
+            }
+
+          } else {
+            // ── Fallback: raw output ──
+            const raw = document.createElement('div');
+            raw.className = 'task-output';
+            raw.textContent = tr.output || '';
+            body.appendChild(raw);
+          }
+        } else {
+          // ── Error case ──
+          const errDiv = document.createElement('div');
+          errDiv.className = 'task-error';
+
+          let parsed = null;
+          try { parsed = JSON.parse(tr.output); } catch(e) { /* ignore */ }
+
+          if (tr.worker_type === 'data_scientist' && parsed && parsed.query_used) {
+            errDiv.innerHTML =
+              '<div><strong>Error:</strong> ' + esc(parsed.error || tr.error || '(unknown)') + '</div>'
+              + '<div><strong>Query:</strong> <code>' + esc(parsed.query_used) + '</code></div>';
+          } else {
+            errDiv.textContent = tr.error || '(unknown error)';
+          }
+          body.appendChild(errDiv);
+        }
+
+        taskDetails.appendChild(body);
+        taskList.appendChild(taskDetails);
       });
 
       traceBody.appendChild(taskList);

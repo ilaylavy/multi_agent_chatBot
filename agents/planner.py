@@ -139,6 +139,16 @@ async def planner_node(state: AgentState) -> dict:
     reasoning = data.get("reasoning", {})
     reasoning_str = json.dumps(reasoning, indent=2) if reasoning else ""
 
+    logger.debug(
+        "[%s] Planner — reasoning=%s tasks=%s",
+        state.get("session_id", "?"),
+        reasoning_str or "(none)",
+        json.dumps(
+            [{"task_id": t["task_id"], "worker_type": t["worker_type"],
+              "source_ids": t["source_ids"]} for t in tasks],
+        ),
+    )
+
     return {"plan": tasks, "planner_reasoning": reasoning_str}
 
 
