@@ -11,22 +11,22 @@ pdfs:
   type: pdf
   pages: 4
   sections:
-  - 'Section 1: Flight Class Entitlements by Clearance Level'
-  - 'Section 2: Booking Rules'
-  - 'Section 3: Hotel Nightly Allowances'
-  - 'Section 4: Per Diem Rates'
-  - 'Section 5: Expense Reimbursement Process'
+  - Flight Class Entitlements by Clearance Level
+  - Booking Rules
+  - Hotel Nightly Allowances
+  - Per Diem Rates
+  - Expense Reimbursement Process
   tags:
   - corporate travel policy
   - flight class entitlements
   - clearance levels
-  - booking rules
   - hotel allowances
   - per diem rates
   - expense reimbursement
-  - travel receipts
-  - travel expense claims
+  - travel booking rules
+  - travel expenses
   - manager approval
+  - travel receipts
 - id: hr_handbook_v3
   filename: hr_handbook_v3.pdf
   type: pdf
@@ -96,58 +96,60 @@ tables:
 - id: salary_bands
   filename: salary_bands.sqlite
   type: sqlite
-  base_path: tests/fixtures/tables/
+  base_path: data/tables/
   row_count_approx: 16
   columns:
   - name: id
     type: integer
-    description: A unique identifier for each record.
+    description: Unique identifier for each salary range entry
   - name: clearance_level
     type: string
-    description: The security clearance level required for the department.
+    description: Security clearance level associated with the salary range
   - name: department
     type: string
-    description: The name of the department.
+    description: Department within the organization
   - name: salary_min
     type: integer
-    description: The minimum salary offered in the department.
+    description: Minimum salary for the given clearance level and department
   - name: salary_max
     type: integer
-    description: The maximum salary offered in the department.
+    description: Maximum salary for the given clearance level and department
   - name: currency
     type: string
-    description: The currency in which the salary is paid.
-  relationships: []
+    description: Currency in which the salary is denominated
+  relationships:
+  - clearance_level links to clearance_levels.level
+  - department links to departments.name
   table_name: salary_bands
 - id: employees
   filename: employees.csv
   type: csv
-  base_path: tests/fixtures/tables/
+  base_path: data/tables/
   row_count_approx: 10
   columns:
   - name: employee_id
     type: integer
-    description: A unique identifier for each employee.
+    description: Unique identifier for each employee
   - name: full_name
     type: string
-    description: The full name of the employee.
+    description: Full name of the employee
   - name: email
     type: string
-    description: The email address of the employee.
+    description: Corporate email address of the employee
   - name: department
     type: string
-    description: The department in which the employee works.
+    description: Department where the employee works
   - name: clearance_level
     type: string
-    description: The security clearance level assigned to the employee.
+    description: Security clearance level assigned to the employee
   - name: hire_date
     type: string
-    description: The date the employee was hired.
+    description: Date when the employee was hired
   - name: manager_id
     type: float
-    description: The employee ID of the employee's manager, if applicable.
+    description: Employee ID of the manager supervising this employee, if any
   relationships:
-  - manager_id links to employee_id
+  - manager_id links to employee.employee_id
 - id: training_records
   filename: training_records.csv
   type: csv
@@ -156,25 +158,25 @@ tables:
   columns:
   - name: record_id
     type: integer
-    description: A unique identifier for each training record.
+    description: Unique identifier for each training record
   - name: employee_id
     type: integer
-    description: The identifier for the employee who completed the training.
+    description: Identifier linking the training record to a specific employee
   - name: training_name
     type: string
-    description: The name of the training program completed by the employee.
+    description: Name of the training course completed by the employee
   - name: completion_date
     type: string
-    description: The date on which the training was completed.
+    description: Date when the training was completed
   - name: expiry_date
     type: string
-    description: The date on which the training certification expires.
+    description: Date when the training certification or validity expires
   - name: status
     type: string
-    description: The current status of the training, such as 'Completed' or 'Expired'.
+    description: Current status of the training (e.g., Completed, Expired)
   - name: score
     type: float
-    description: The score achieved by the employee in the training program.
+    description: Score or grade achieved by the employee in the training
   relationships:
   - employee_id links to employees.employee_id
 - id: projects
@@ -185,30 +187,30 @@ tables:
   columns:
   - name: project_id
     type: integer
-    description: A unique identifier for each project.
+    description: Unique identifier for each project
   - name: project_name
     type: string
-    description: The name of the project.
+    description: Name or title of the project
   - name: department
     type: string
-    description: The department responsible for the project.
+    description: Department responsible for the project
   - name: lead_employee_id
     type: integer
-    description: The ID of the employee leading the project.
+    description: Identifier of the employee leading the project
   - name: budget
     type: integer
-    description: The allocated budget for the project.
+    description: Allocated budget amount for the project
   - name: spent
     type: integer
-    description: The amount of money spent on the project so far.
+    description: Amount of budget spent so far on the project
   - name: status
     type: string
-    description: The current status of the project (e.g., Active, Completed).
+    description: Current status of the project such as Active or Completed
   - name: start_date
     type: string
-    description: The date when the project started.
+    description: Date when the project started
   - name: end_date
     type: string
-    description: The date when the project is expected to or has been completed.
+    description: Date when the project ended or is expected to end
   relationships:
   - lead_employee_id links to employees.employee_id
