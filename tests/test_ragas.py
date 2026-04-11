@@ -640,6 +640,27 @@ async def _run_all_queries(question_nums: set[int] | None = None) -> List[dict]:
             expected_sources = entry["expected_sources"]
             source_match = set(expected_sources).issubset(set(actual_sources))
 
+            # Build compact per-task summary for debugging
+            task_results_raw = trace.get("task_results", {})
+            task_details = []
+            for tid, tr in task_results_raw.items():
+                detail: Dict[str, Any] = {
+                    "task_id": tr.get("task_id", tid),
+                    "worker_type": tr.get("worker_type", ""),
+                    "success": tr.get("success", False),
+                }
+                try:
+                    out = json.loads(tr.get("output", "{}"))
+                except (json.JSONDecodeError, TypeError):
+                    out = {}
+                if not tr.get("success"):
+                    detail["error"] = out.get("error", tr.get("error", ""))
+                    detail["error_category"] = out.get("error_category")
+                if tr.get("worker_type") == "data_scientist":
+                    detail["query_used"] = out.get("query_used")
+                    detail["table_name"] = out.get("table_name")
+                task_details.append(detail)
+
             result = {
                 "question_num": qnum,
                 "question": question,
@@ -655,6 +676,10 @@ async def _run_all_queries(question_nums: set[int] | None = None) -> List[dict]:
                 "audit_verdict": trace.get("audit_verdict", "N/A"),
                 "chat_intent": trace.get("chat_intent", ""),
                 "elapsed_s": round(elapsed, 1),
+                "task_details": task_details,
+                "plan": trace.get("plan", []),
+                "planner_reasoning": trace.get("planner_reasoning"),
+                "has_task_failures": any(not t["success"] for t in task_details),
                 "trace": _build_debug_trace(trace),
             }
             results.append(result)
@@ -682,6 +707,10 @@ async def _run_all_queries(question_nums: set[int] | None = None) -> List[dict]:
                 "audit_verdict": "ERROR",
                 "chat_intent": "",
                 "elapsed_s": round(elapsed, 1),
+                "task_details": [],
+                "plan": [],
+                "planner_reasoning": None,
+                "has_task_failures": False,
                 "trace": None,
             })
 

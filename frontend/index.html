@@ -708,6 +708,66 @@ function appendUserBubble(text) {
   pushMessage(div);
 }
 
+/**
+ * Render data-scientist debug fields (reasoning, tables, query, etc.)
+ * into the given container. Used by both success and error display paths.
+ */
+function renderDataScientistFields(container, parsed) {
+  if (parsed.reasoning) {
+    const rsnDetails = document.createElement('details');
+    rsnDetails.style.marginBottom = '0.3rem';
+    rsnDetails.innerHTML = '<summary style="cursor:pointer;font-size:0.78rem"><strong>Reasoning</strong></summary>';
+    const rsnPre = document.createElement('pre');
+    rsnPre.style.cssText = 'margin-top:0.1rem;max-height:200px;overflow:auto;font-size:0.72rem;';
+    rsnPre.textContent = typeof parsed.reasoning === 'string'
+      ? parsed.reasoning
+      : JSON.stringify(parsed.reasoning, null, 2);
+    rsnDetails.appendChild(rsnPre);
+    container.appendChild(rsnDetails);
+  }
+  if (parsed.tables_loaded && parsed.tables_loaded.length) {
+    const tlDiv = document.createElement('div');
+    tlDiv.innerHTML = '<strong>Tables loaded:</strong> ' + parsed.tables_loaded.map(t => esc(t)).join(', ');
+    container.appendChild(tlDiv);
+  }
+  if (parsed.query_used) {
+    const qDiv = document.createElement('div');
+    qDiv.innerHTML = '<strong>Query:</strong> <code>' + esc(parsed.query_used) + '</code>';
+    container.appendChild(qDiv);
+  }
+  if (parsed.table_name) {
+    const tDiv = document.createElement('div');
+    tDiv.innerHTML = '<strong>Table:</strong> ' + esc(parsed.table_name);
+    container.appendChild(tDiv);
+  }
+  if (parsed.row_count != null) {
+    const rDiv = document.createElement('div');
+    rDiv.innerHTML = '<strong>Row count:</strong> ' + parsed.row_count;
+    container.appendChild(rDiv);
+  }
+  if (parsed.result_value != null) {
+    const vDiv = document.createElement('div');
+    vDiv.innerHTML = '<strong>Result:</strong>';
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'margin-top:0.1rem;max-height:200px;overflow:auto;font-size:0.72rem;';
+    pre.textContent = typeof parsed.result_value === 'string'
+      ? parsed.result_value
+      : JSON.stringify(parsed.result_value, null, 2);
+    vDiv.appendChild(pre);
+    container.appendChild(vDiv);
+  }
+  if (parsed.injected_context) {
+    const icDetails = document.createElement('details');
+    icDetails.style.marginTop = '0.3rem';
+    icDetails.innerHTML = '<summary style="cursor:pointer;font-size:0.78rem"><strong>Injected prerequisite context</strong></summary>';
+    const icPre = document.createElement('pre');
+    icPre.style.cssText = 'margin-top:0.1rem;max-height:150px;overflow:auto;font-size:0.72rem;white-space:pre-wrap;word-break:break-word;';
+    icPre.textContent = parsed.injected_context;
+    icDetails.appendChild(icPre);
+    container.appendChild(icDetails);
+  }
+}
+
 function appendAssistantBubble(data, query) {
   const div = document.createElement('div');
   div.className = 'msg msg-assistant';
@@ -950,59 +1010,7 @@ function appendAssistantBubble(data, query) {
 
           } else if (tr.worker_type === 'data_scientist' && parsed && typeof parsed === 'object') {
             // ── Data Scientist: structured result ──
-            if (parsed.reasoning) {
-              const rsnDetails = document.createElement('details');
-              rsnDetails.style.marginBottom = '0.3rem';
-              rsnDetails.innerHTML = '<summary style="cursor:pointer;font-size:0.78rem"><strong>Reasoning</strong></summary>';
-              const rsnPre = document.createElement('pre');
-              rsnPre.style.cssText = 'margin-top:0.1rem;max-height:200px;overflow:auto;font-size:0.72rem;';
-              rsnPre.textContent = typeof parsed.reasoning === 'string'
-                ? parsed.reasoning
-                : JSON.stringify(parsed.reasoning, null, 2);
-              rsnDetails.appendChild(rsnPre);
-              body.appendChild(rsnDetails);
-            }
-            if (parsed.tables_loaded && parsed.tables_loaded.length) {
-              const tlDiv = document.createElement('div');
-              tlDiv.innerHTML = '<strong>Tables loaded:</strong> ' + parsed.tables_loaded.map(t => esc(t)).join(', ');
-              body.appendChild(tlDiv);
-            }
-            if (parsed.query_used) {
-              const qDiv = document.createElement('div');
-              qDiv.innerHTML = '<strong>Query:</strong> <code>' + esc(parsed.query_used) + '</code>';
-              body.appendChild(qDiv);
-            }
-            if (parsed.table_name) {
-              const tDiv = document.createElement('div');
-              tDiv.innerHTML = '<strong>Table:</strong> ' + esc(parsed.table_name);
-              body.appendChild(tDiv);
-            }
-            if (parsed.row_count != null) {
-              const rDiv = document.createElement('div');
-              rDiv.innerHTML = '<strong>Row count:</strong> ' + parsed.row_count;
-              body.appendChild(rDiv);
-            }
-            if (parsed.result_value != null) {
-              const vDiv = document.createElement('div');
-              vDiv.innerHTML = '<strong>Result:</strong>';
-              const pre = document.createElement('pre');
-              pre.style.cssText = 'margin-top:0.1rem;max-height:200px;overflow:auto;font-size:0.72rem;';
-              pre.textContent = typeof parsed.result_value === 'string'
-                ? parsed.result_value
-                : JSON.stringify(parsed.result_value, null, 2);
-              vDiv.appendChild(pre);
-              body.appendChild(vDiv);
-            }
-            if (parsed.injected_context) {
-              const icDetails = document.createElement('details');
-              icDetails.style.marginTop = '0.3rem';
-              icDetails.innerHTML = '<summary style="cursor:pointer;font-size:0.78rem"><strong>Injected prerequisite context</strong></summary>';
-              const icPre = document.createElement('pre');
-              icPre.style.cssText = 'margin-top:0.1rem;max-height:150px;overflow:auto;font-size:0.72rem;white-space:pre-wrap;word-break:break-word;';
-              icPre.textContent = parsed.injected_context;
-              icDetails.appendChild(icPre);
-              body.appendChild(icDetails);
-            }
+            renderDataScientistFields(body, parsed);
 
           } else {
             // ── Fallback: raw output ──
@@ -1013,20 +1021,40 @@ function appendAssistantBubble(data, query) {
           }
         } else {
           // ── Error case ──
-          const errDiv = document.createElement('div');
-          errDiv.className = 'task-error';
-
           let parsed = null;
           try { parsed = JSON.parse(tr.output); } catch(e) { /* ignore */ }
 
-          if (tr.worker_type === 'data_scientist' && parsed && parsed.query_used) {
-            errDiv.innerHTML =
-              '<div><strong>Error:</strong> ' + esc(parsed.error || tr.error || '(unknown)') + '</div>'
-              + '<div><strong>Query:</strong> <code>' + esc(parsed.query_used) + '</code></div>';
+          if (tr.worker_type === 'data_scientist' && parsed && typeof parsed === 'object') {
+            // Category badge
+            const cat = parsed.error_category || 'ERROR';
+            const badgeColors = {
+              'NO_RESULTS': '#b58900',
+              'FILE_NOT_FOUND': '#dc322f',
+              'SYNTAX_ERROR': '#dc322f',
+              'EMPTY_QUERY': '#dc322f',
+              'NON_SELECT': '#dc322f',
+              'EXECUTION_ERROR': '#cb4b16',
+            };
+            const badgeColor = badgeColors[cat] || '#dc322f';
+
+            const catBadge = document.createElement('span');
+            catBadge.style.cssText = 'display:inline-block;padding:0.1rem 0.4rem;border-radius:3px;color:#fff;font-size:0.7rem;font-weight:bold;margin-bottom:0.3rem;background:' + badgeColor;
+            catBadge.textContent = cat;
+            body.appendChild(catBadge);
+
+            const errDiv = document.createElement('div');
+            errDiv.className = 'task-error';
+            errDiv.innerHTML = '<strong>Error:</strong> ' + esc(parsed.error || tr.error || '(unknown)');
+            body.appendChild(errDiv);
+
+            // Show all available debug fields
+            renderDataScientistFields(body, parsed);
           } else {
+            const errDiv = document.createElement('div');
+            errDiv.className = 'task-error';
             errDiv.textContent = tr.error || '(unknown error)';
+            body.appendChild(errDiv);
           }
-          body.appendChild(errDiv);
         }
 
         taskDetails.appendChild(body);
