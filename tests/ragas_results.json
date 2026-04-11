@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "timestamp": "2026-04-11T10:20:07.548362+00:00",
+    "timestamp": "2026-04-11T10:43:39.688716+00:00",
     "base_url": "http://localhost:8000",
     "n_questions": 18,
-    "n_evaluated": 17,
+    "n_evaluated": 18,
     "n_errors": 0,
     "n_eval_runs": 1,
     "ragas_version": "0.4.3",
@@ -15,31 +15,31 @@
     "context_recall": 0.7
   },
   "overall": {
-    "faithfulness": 0.7790849673202613,
-    "context_precision": 0.5245098038874999,
-    "context_recall": 0.8431372549019608
+    "faithfulness": 0.8652116402116402,
+    "context_precision": 0.5046296295923611,
+    "context_recall": 0.8518518518518519
   },
   "by_difficulty": {
     "simple_lookup": {
-      "faithfulness": 0.95,
-      "context_precision": 0.999999999925,
+      "faithfulness": 0.76,
+      "context_precision": 0.99999999992,
       "context_recall": 1.0,
-      "n": 4
+      "n": 5
     },
     "filtering": {
-      "faithfulness": 0.6875,
+      "faithfulness": 0.9375,
       "context_precision": 0.0,
       "context_recall": 1.0,
       "n": 4
     },
     "cross_source": {
-      "faithfulness": 0.788888888888889,
-      "context_precision": 0.7666666666266667,
+      "faithfulness": 0.9714285714285713,
+      "context_precision": 0.5999999999616666,
       "context_recall": 0.7333333333333333,
       "n": 5
     },
     "multi_hop": {
-      "faithfulness": 0.6875,
+      "faithfulness": 0.7916666666666666,
       "context_precision": 0.27083333331354165,
       "context_recall": 0.6666666666666666,
       "n": 4
@@ -59,14 +59,14 @@
       ],
       "source_match": true,
       "status": "success",
-      "final_answer": "Passwords must be changed every 90 days, with a prompt 7 days before expiration. After expiration, the account is locked until a new password is set via the self-service portal or IT support, and passwords must include uppercase, lowercase, digit, and special character, avoiding dictionary words and common patterns.",
+      "final_answer": "Passwords must be changed every 90 days, with a prompt 7 days before expiration. If the password expires, the account is locked until a new password is set via the self-service portal or IT support, and passwords must include at least one uppercase letter, one lowercase letter, one digit, and one special character from !@#$%^&*()-_=+.",
       "contexts": [
         "**Complexity:** Passwords must contain at least one uppercase letter, one lowercase letter, one digit, and one special character from the set !@#$%^&*()-_=+. Dictionary words and common patterns (e.g. 'Password123!') are detected and rejected. \n\n**Rotation:** Passwords must be changed every 90 days. The system will prompt the user 7 days before expiration. After expiration, the account is locked until a new password is set via the self-service portal or IT support. \n\n**History:** The last 10"
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 14.6,
+      "elapsed_s": 13.1,
       "faithfulness": 1.0,
       "context_precision": 0.9999999999,
       "context_recall": 1.0
@@ -86,12 +86,12 @@
       "status": "success",
       "final_answer": "Employees receive 10 sick days per year, and a medical certificate is required for absences of 3 or more consecutive days; unused sick leave does not carry over or get compensated.",
       "contexts": [
-        "## **Sick Leave:** \n\nAll employees receive 10 sick days per year regardless of clearance level. A medical certificate is required for absences of 3 or more consecutive days. Unused sick leave does not carry over and is not compensated. \n\n## **Parental Leave:** \n\nAll employees are entitled to 90 days of paid parental leave for the birth or adoption of a"
+        "be carried over up to a maximum of 5 days into the following calendar year. Any leave beyond the carry-over limit is forfeited on January 1st. \n\n## **Sick Leave:** \n\nAll employees receive 10 sick days per year regardless of clearance level. A medical certificate is required for absences of 3 or more consecutive days. Unused sick leave does not carry over and is not compensated. \n\n## **Parental Leave:** \n\nAll employees are entitled to 90 days of paid parental leave for the birth or adoption of a"
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 12.8,
+      "elapsed_s": 14.9,
       "faithfulness": 1.0,
       "context_precision": 0.9999999999,
       "context_recall": 1.0
@@ -109,15 +109,16 @@
       ],
       "source_match": true,
       "status": "success",
-      "final_answer": "The late payment penalty for vendors is 1.5% per month on any invoice not paid within the agreed payment terms. This penalty applies to the outstanding balance from the due date until full payment is made.",
+      "final_answer": "The late payment penalty for vendors is 1.5% per month on any invoice not paid within the agreed payment terms, calculated from the due date until full payment.",
       "contexts": [
         "payment terms. Preferred vendor status is granted to vendors with a minimum 2-year relationship and annual spend exceeding $50,000. Preferred vendors receive priority invoice processing. \n\n**Small Purchases:** Amounts under $50 are paid immediately upon receipt of goods or services. No purchase order is required for amounts under $50. \n\n**Late Payment Penalty:** A penalty of 1.5% per month is applied to any invoice not paid within the agreed payment terms. The penalty is calculated on the",
-        "ed payment terms. The penalty is calculated on the outstanding balance from the due date until full payment is received. \n\nAll vendor disputes must be escalated to the Finance department within 10 business days of the disputed invoice date."
+        "ed payment terms. The penalty is calculated on the outstanding balance from the due date until full payment is received. \n\nAll vendor disputes must be escalated to the Finance department within 10 business days of the disputed invoice date.",
+        "## **Section 4: Vendor Payment Terms** \n\nAll vendor invoices are processed according to the payment terms agreed in the vendor contract. Standard and preferred vendor terms are defined below. \n\n**Standard Vendors:** Net 30 payment terms. Invoices are due within 30 calendar days of receipt. Early payment discounts offered by vendors may be accepted if the discount exceeds 2% and the invoice amount exceeds $1,000. \n\n**Preferred Vendors:** Net 15 payment terms. Preferred vendor status is granted"
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 13.9,
+      "elapsed_s": 15.2,
       "faithfulness": 1.0,
       "context_precision": 0.99999999995,
       "context_recall": 1.0
@@ -135,7 +136,7 @@
       ],
       "source_match": true,
       "status": "success",
-      "final_answer": "Preferred vendors have Net 15 payment terms, with invoices due within 15 calendar days of receipt, and a late payment penalty of 1.5% per month if not paid on time. Preferred vendor status requires a minimum 2-year relationship and annual spend exceeding $50,000.",
+      "final_answer": "Preferred vendors have Net 15 payment terms, with invoices due within 15 days of receipt, and a late payment penalty of 1.5% per month if not paid on time. Preferred vendor status requires a minimum 2-year relationship and annual spend exceeding $50,000.",
       "contexts": [
         "## **Section 4: Vendor Payment Terms** \n\nAll vendor invoices are processed according to the payment terms agreed in the vendor contract. Standard and preferred vendor terms are defined below. \n\n**Standard Vendors:** Net 30 payment terms. Invoices are due within 30 calendar days of receipt. Early payment discounts offered by vendors may be accepted if the discount exceeds 2% and the invoice amount exceeds $1,000. \n\n**Preferred Vendors:** Net 15 payment terms. Preferred vendor status is granted",
         "payment terms. Preferred vendor status is granted to vendors with a minimum 2-year relationship and annual spend exceeding $50,000. Preferred vendors receive priority invoice processing. \n\n**Small Purchases:** Amounts under $50 are paid immediately upon receipt of goods or services. No purchase order is required for amounts under $50. \n\n**Late Payment Penalty:** A penalty of 1.5% per month is applied to any invoice not paid within the agreed payment terms. The penalty is calculated on the"
@@ -143,7 +144,7 @@
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 22.2,
+      "elapsed_s": 18.2,
       "faithfulness": 0.8,
       "context_precision": 0.99999999995,
       "context_recall": 1.0
@@ -156,20 +157,23 @@
       "expected_sources": [
         "salary_bands"
       ],
-      "actual_sources": [],
-      "source_match": false,
+      "actual_sources": [
+        "employees",
+        "salary_bands"
+      ],
+      "source_match": true,
       "status": "success",
-      "final_answer": "The salary range for a clearance level B engineer was not found in the system.",
+      "final_answer": "The salary range for a clearance level B engineer is between $110,000 and $155,000.",
       "contexts": [
-        "No context retrieved."
+        "From employees, salary_bands: salary_min is 110000, salary_max is 155000."
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 10.8,
+      "elapsed_s": 12.8,
       "faithfulness": 0.0,
-      "context_precision": 0.0,
-      "context_recall": 0.0
+      "context_precision": 0.9999999999,
+      "context_recall": 1.0
     },
     {
       "question_num": 6,
@@ -192,7 +196,7 @@
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 15.9,
+      "elapsed_s": 15.6,
       "faithfulness": 1.0,
       "context_precision": 0.0,
       "context_recall": 1.0
@@ -210,18 +214,37 @@
       ],
       "source_match": true,
       "status": "success",
-      "final_answer": "Employees with expired training records are Employee ID 2 (Security Awareness), Employee ID 4 (Emergency Procedures), Employee ID 6 (Data Privacy), and Employee ID 9 (Financial Compliance).",
+      "final_answer": "Employees with expired training records are Employee 2 (Security Awareness, expired on 2024-11-05), Employee 4 (Emergency Procedures, expired on 2024-08-10), Employee 6 (Data Privacy, expired on 2024-06-15), and Employee 9 (Financial Compliance, expired on 2024-09-25).",
       "contexts": [
-        "From training_records.csv: employee_id is 2, training_name is Security Awareness.",
-        "From training_records.csv: employee_id is 4, training_name is Emergency Procedures.",
-        "From training_records.csv: employee_id is 6, training_name is Data Privacy.",
-        "From training_records.csv: employee_id is 9, training_name is Financial Compliance."
+        "From training_records.csv: employee_id is 1, training_name is Security Awareness, expiry_date is 2025-01-10, status is Completed.",
+        "From training_records.csv: employee_id is 1, training_name is Data Privacy, expiry_date is 2025-03-15, status is Completed.",
+        "From training_records.csv: employee_id is 1, training_name is Leadership Fundamentals, expiry_date is 2025-06-20, status is Completed.",
+        "From training_records.csv: employee_id is 2, training_name is Security Awareness, expiry_date is 2024-11-05, status is Expired.",
+        "From training_records.csv: employee_id is 2, training_name is Financial Compliance, expiry_date is 2025-04-12, status is Completed.",
+        "From training_records.csv: employee_id is 3, training_name is Security Awareness, expiry_date is 2025-02-18, status is Completed.",
+        "From training_records.csv: employee_id is 3, training_name is Data Privacy, expiry_date is 2025-05-22, status is Completed.",
+        "From training_records.csv: employee_id is 4, training_name is Security Awareness, expiry_date is 2025-01-25, status is Completed.",
+        "From training_records.csv: employee_id is 4, training_name is Emergency Procedures, expiry_date is 2024-08-10, status is Expired.",
+        "From training_records.csv: employee_id is 5, training_name is Security Awareness, expiry_date is 2025-03-01, status is Completed.",
+        "From training_records.csv: employee_id is 5, training_name is Financial Compliance, expiry_date is 2025-07-14, status is Completed.",
+        "From training_records.csv: employee_id is 5, training_name is Leadership Fundamentals, expiry_date is 2025-09-30, status is Completed.",
+        "From training_records.csv: employee_id is 6, training_name is Security Awareness, expiry_date is 2025-04-05, status is Completed.",
+        "From training_records.csv: employee_id is 6, training_name is Data Privacy, expiry_date is 2024-06-15, status is Expired.",
+        "From training_records.csv: employee_id is 7, training_name is Security Awareness, expiry_date is 2025-02-28, status is Completed.",
+        "From training_records.csv: employee_id is 7, training_name is Emergency Procedures, expiry_date is 2025-08-20, status is Completed.",
+        "From training_records.csv: employee_id is 8, training_name is Security Awareness, expiry_date is 2025-05-10, status is Completed.",
+        "From training_records.csv: employee_id is 8, training_name is Emergency Procedures, expiry_date is 2025-06-01, status is Completed.",
+        "From training_records.csv: employee_id is 9, training_name is Security Awareness, expiry_date is 2025-03-20, status is Completed.",
+        "From training_records.csv: employee_id is 9, training_name is Financial Compliance, expiry_date is 2024-09-25, status is Expired.",
+        "From training_records.csv: employee_id is 10, training_name is Security Awareness, expiry_date is 2025-01-05, status is Completed.",
+        "From training_records.csv: employee_id is 10, training_name is Leadership Fundamentals, expiry_date is 2025-04-18, status is Completed.",
+        "From training_records.csv: employee_id is 10, training_name is Data Privacy, expiry_date is 2025-07-30, status is Completed."
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 12.3,
-      "faithfulness": 0.0,
+      "elapsed_s": 15.8,
+      "faithfulness": 1.0,
       "context_precision": 0.0,
       "context_recall": 1.0
     },
@@ -248,7 +271,7 @@
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 12.4,
+      "elapsed_s": 13.5,
       "faithfulness": 0.75,
       "context_precision": 0.0,
       "context_recall": 1.0
@@ -266,7 +289,7 @@
       ],
       "source_match": true,
       "status": "success",
-      "final_answer": "The completed projects that went over budget are 'Annual Audit Automation' (spent $48,000 vs. $45,000 budget), 'CRM Integration' (spent $82,500 vs. $80,000 budget), and 'API Gateway Upgrade' (spent $70,500 vs. $70,000 budget).",
+      "final_answer": "The completed projects that went over budget are 'Annual Audit Automation,' 'CRM Integration,' and 'API Gateway Upgrade.'",
       "contexts": [
         "From projects.csv: project_id is 2, project_name is Annual Audit Automation, budget is 45000, spent is 48000, status is Completed.",
         "From projects.csv: project_id is 4, project_name is CRM Integration, budget is 80000, spent is 82500, status is Completed.",
@@ -275,7 +298,7 @@
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 13.3,
+      "elapsed_s": 11.5,
       "faithfulness": 1.0,
       "context_precision": 0.0,
       "context_recall": 1.0
@@ -295,17 +318,19 @@
       ],
       "source_match": true,
       "status": "success",
-      "final_answer": "Dan Cohen is entitled to Business Class on flights exceeding 4 hours; for shorter flights, Economy or Economy Plus class is permitted.",
+      "final_answer": "Dan Cohen is entitled to Business Class on flights exceeding 4 hours; for shorter flights, Economy or Economy Plus is permitted.",
       "contexts": [
         "From employees.csv: result is B.",
-        "**Clearance Level B:** Employees with clearance level B are entitled to Business Class on flights exceeding 4 hours. Economy or Economy Plus applies to shorter flights."
+        "## **Travel Policy 2024** \n\n## **Section 1: Flight Class Entitlements by Clearance Level** \n\nAll corporate travel must comply with the flight class entitlements defined below. Entitlements are determined solely by the employee's clearance level at the time of travel booking. \n\n**Clearance Level D:** Employees with clearance level D are entitled to Economy class only on all flights, regardless of duration. Budget carrier options should be considered where available. \n\n**Clearance Level C:**",
+        "nsidered where available. \n\n**Clearance Level C:** Employees with clearance level C are entitled to Economy class on all flights. Business Class is permitted on flights exceeding 8 hours with prior manager approval. \n\n**Clearance Level B:** Employees with clearance level B are entitled to Business Class on flights exceeding 4 hours. Economy or Economy Plus applies to shorter flights. \n\n**Clearance Level A:** Employees with clearance level A are entitled to Business Class on all flights. First",
+        "e entitled to Business Class on all flights. First Class is permitted on flights exceeding 10 hours. \n\n## **Section 2: Booking Rules** \n\nAll flights must be booked at least 14 days in advance unless a travel exception is approved by a direct manager with clearance level A or above. Last-minute bookings without approval will not be reimbursed above Economy class rates regardless of clearance level."
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 13.6,
-      "faithfulness": 0.5,
-      "context_precision": 0.99999999995,
+      "elapsed_s": 16.2,
+      "faithfulness": 1.0,
+      "context_precision": 0.3333333333,
       "context_recall": 0.5
     },
     {
@@ -323,7 +348,7 @@
       ],
       "source_match": true,
       "status": "success",
-      "final_answer": "Oren Shapiro's hotel nightly allowance is up to $180 per night, including all taxes and fees, for security clearance level C. Receipts are required for all claims, and standard business hotels are preferred.",
+      "final_answer": "Oren Shapiro's hotel nightly allowance is up to $180 per night.",
       "contexts": [
         "From employees.csv: result is C.",
         "## **Section 3: Hotel Nightly Allowances** \n\nHotel accommodation is reimbursed up to the nightly limits below. Receipts are required for all hotel claims. The limits apply per night including all taxes and fees. \n\n**Clearance Level D:** Up to $120 per night. Shared accommodation is encouraged for conferences and team events to reduce costs. \n\n**Clearance Level C:** Up to $180 per night. Standard business hotels are preferred. \n\n**Clearance Level B:** Up to $250 per night. Premium business"
@@ -331,7 +356,7 @@
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 18.5,
+      "elapsed_s": 16.5,
       "faithfulness": 1.0,
       "context_precision": 0.49999999995,
       "context_recall": 0.5
@@ -351,18 +376,18 @@
       ],
       "source_match": true,
       "status": "success",
-      "final_answer": "Tal Mizrahi has a security clearance level of D, which grants no access to employee personal data and financial records, read-only access to customer data, and full access to internal documents and public data. Any access outside this matrix requires approval from the IT Security team and the data owner, with temporary elevated access expiring after 30 days unless renewed.",
+      "final_answer": "Tal Mizrahi has a security clearance level D and can access Customer Data (read-only), Internal Documents (full access), and Public Data (full access). Access to Employee Personal Data and Financial Records is not permitted unless approved by the data owner with justification, and any elevated access expires after 30 days unless renewed.",
       "contexts": [
-        "From employees.csv: result is D.",
+        "From employees.csv: clearance_level is D.",
         "## **Section 4: Data Access Matrix** \n\nThe following matrix defines data access permissions by clearance level. Access is enforced at the system level and audited quarterly. \n\n|**Data Category**|**Clearance A**|**Clearance B**|**Clearance C**|**Clearance D**|\n|---|---|---|---|---|\n|Employee Personal Data|Full Access|Read Only|No Access|No Access|\n|Financial Records|Full Access|Full Access|Read Only|No Access|\n|Customer Data|Full Access|Full Access|Full Access|Read Only|\n|Internal Documents|Full",
         "ss|Full Access|Read Only|\n|Internal Documents|Full Access|Full Access|Full Access|Full Access|\n|Public Data|Full Access|Full Access|Full Access|Full Access|\n\n\nAccess requests outside of the defined matrix must be submitted to the IT Security team with justification and approved by the data owner. Temporary elevated access expires after 30 days unless renewed."
       ],
-      "retry_count": 1,
+      "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 52.9,
-      "faithfulness": 0.7777777777777778,
-      "context_precision": 0.9999999999666667,
+      "elapsed_s": 18.1,
+      "faithfulness": 0.8571428571428571,
+      "context_precision": 0.8333333332916666,
       "context_recall": 1.0
     },
     {
@@ -380,7 +405,7 @@
       ],
       "source_match": true,
       "status": "success",
-      "final_answer": "Noa Levi's monthly project budget limit is $50,000. This limit applies to her department, Engineering, and her clearance level, A.",
+      "final_answer": "Noa Levi's monthly project budget limit is $50,000, based on her department and clearance level.",
       "contexts": [
         "From employees.csv: department is Engineering, clearance_level is A.",
         "## **Section 2: Project Budget Limits by Department and Clearance Level** \n\nEach employee's monthly project budget limit is determined by their department and clearance level. Budgets may not be pooled or transferred between employees without Finance approval. \n\n|**Department**|**Clearance A**|**Clearance B**|**Clearance C**|**Clearance",
@@ -389,8 +414,8 @@
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 17.6,
-      "faithfulness": 0.6666666666666666,
+      "elapsed_s": 15.4,
+      "faithfulness": 1.0,
       "context_precision": 0.3333333333,
       "context_recall": 1.0
     },
@@ -409,7 +434,7 @@
       ],
       "source_match": true,
       "status": "success",
-      "final_answer": "Shira Goldman cannot access employee personal data because she has a security clearance level of C, which has no access to that data according to the data access matrix.",
+      "final_answer": "Shira Goldman cannot access employee personal data because she has a clearance level of C and works in HR, which does not grant access to that data.",
       "contexts": [
         "From employees.csv: clearance_level is C, department is HR.",
         "## **Section 4: Data Access Matrix** \n\nThe following matrix defines data access permissions by clearance level. Access is enforced at the system level and audited quarterly. \n\n|**Data Category**|**Clearance A**|**Clearance B**|**Clearance C**|**Clearance D**|\n|---|---|---|---|---|\n|Employee Personal Data|Full Access|Read Only|No Access|No Access|\n|Financial Records|Full Access|Full Access|Read Only|No Access|\n|Customer Data|Full Access|Full Access|Full Access|Read Only|\n|Internal Documents|Full",
@@ -418,7 +443,7 @@
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 20.2,
+      "elapsed_s": 17.3,
       "faithfulness": 1.0,
       "context_precision": 0.9999999999666667,
       "context_recall": 0.6666666666666666
@@ -438,7 +463,7 @@
       ],
       "source_match": true,
       "status": "success",
-      "final_answer": "Dan Cohen is entitled to 22 days of annual leave per year, while Shira Goldman is entitled to 18 days; thus, Dan Cohen has 4 more days of annual leave annually.",
+      "final_answer": "Dan Cohen is entitled to 22 days of annual leave per year, while Shira Goldman is entitled to 18 days; thus, Dan receives 4 more days annually.",
       "contexts": [
         "From employees.csv: full_name is Dan Cohen, clearance_level is B.",
         "From employees.csv: full_name is Shira Goldman, clearance_level is C.",
@@ -448,7 +473,7 @@
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 20.7,
+      "elapsed_s": 15.9,
       "faithfulness": 1.0,
       "context_precision": 0.0,
       "context_recall": 0.6666666666666666
@@ -468,17 +493,17 @@
       ],
       "source_match": true,
       "status": "success",
-      "final_answer": "Michal Katz leads over-budget projects 'Annual Audit Automation' and 'CRM Integration' with a clearance level of B, while Roi Peretz leads the over-budget 'API Gateway Upgrade' project, also with a clearance level of B.",
+      "final_answer": "Michal Katz leads over-budget projects and has a clearance level of B; Roi Peretz also leads an over-budget project with a clearance level of B.",
       "contexts": [
-        "From projects, employees: project_name is Annual Audit Automation, full_name is Michal Katz, clearance_level is B.",
-        "From projects, employees: project_name is CRM Integration, full_name is Michal Katz, clearance_level is B.",
-        "From projects, employees: project_name is API Gateway Upgrade, full_name is Roi Peretz, clearance_level is B."
+        "From projects, employees: project_id is 2, project_name is Annual Audit Automation, lead_employee_id is 5, full_name is Michal Katz, clearance_level is B.",
+        "From projects, employees: project_id is 4, project_name is CRM Integration, lead_employee_id is 5, full_name is Michal Katz, clearance_level is B.",
+        "From projects, employees: project_id is 8, project_name is API Gateway Upgrade, lead_employee_id is 7, full_name is Roi Peretz, clearance_level is B."
       ],
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 12.9,
-      "faithfulness": 0.25,
+      "elapsed_s": 11.8,
+      "faithfulness": 0.5,
       "context_precision": 0.0,
       "context_recall": 0.0
     },
@@ -497,7 +522,7 @@
       ],
       "source_match": true,
       "status": "success",
-      "final_answer": "Oren Shapiro needs approval from both his Manager and the Department Head for the $1,500 hotel stay.",
+      "final_answer": "A $1,500 hotel stay expense requires approval from both Oren Shapiro\u2019s Manager and the Head of the Engineering department.",
       "contexts": [
         "From employees.csv: clearance_level is C, department is Engineering.",
         "## **Finance Policy 2024** \n\n## **Section 1: Expense Approval Thresholds** \n\nAll employee expenses must follow the approval thresholds defined below. The required approvers depend on the expense amount. Receipts and turnaround times are as specified. \n\n|**Amount Range**|**Required Approvers**|**Receipt Required**|**Turnaround Time**|\n|---|---|---|---|\n|Up to $100|Self-approval|No|Immediate|\n|$100 - $500|Manager approval|Yes|3 business days|\n|$500 - $2,000|Manager + Department Head|Yes|5",
@@ -506,8 +531,8 @@
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 19.9,
-      "faithfulness": 0.5,
+      "elapsed_s": 17.1,
+      "faithfulness": 0.6666666666666666,
       "context_precision": 0.5833333333041666,
       "context_recall": 1.0
     },
@@ -532,17 +557,11 @@
       "retry_count": 0,
       "audit_verdict": "PASS",
       "chat_intent": "PLAN",
-      "elapsed_s": 19.0,
+      "elapsed_s": 14.3,
       "faithfulness": 1.0,
       "context_precision": 0.49999999995,
       "context_recall": 1.0
     }
   ],
-  "skipped": [
-    {
-      "index": 4,
-      "reason": "no_context",
-      "question": "What is the salary range for a clearance level B engineer?"
-    }
-  ]
+  "skipped": []
 }

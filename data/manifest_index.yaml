@@ -14,15 +14,14 @@ pdfs:
     reimbursement procedures based on employee clearance levels.
   contains:
   - flight class entitlements by employee clearance level
-  - advance booking requirements and exceptions
+  - advance flight booking requirements and exceptions
   - hotel accommodation nightly reimbursement limits
   - per diem meal and incidental expense rates
   - expense claim submission deadlines and receipt requirements
-  - manager approval conditions for exceptions and upgrades
-  - travel expense reimbursement procedures
-  - policy updates based on Consumer Price Index
-  - rules for last-minute travel bookings
-  - clearance level based travel benefits and restrictions
+  - manager and finance department approval processes
+  - travel expense reimbursement policies
+  - travel budget control measures
+  - travel policy compliance rules
 - id: hr_handbook_v3
   name: Hr Handbook V3
   summary: This HR Handbook v3 outlines the onboarding process, leave policies, and
@@ -31,33 +30,33 @@ pdfs:
   - onboarding checklist requirements
   - required employment documents for new hires
   - IT setup and security protocols for new employees
-  - leave entitlements by clearance level
+  - leave entitlements based on clearance levels
   - annual leave carry-over rules
-  - sick leave policy and medical certificate requirements
-  - parental leave entitlements and options
+  - sick leave usage and medical certificate policy
+  - paid and unpaid parental leave options
   - performance review schedule and process
   - employee performance rating scale
 - id: it_security_policy
   name: It Security Policy
-  summary: This IT Security Policy outlines password requirements, data classification
+  summary: This IT Security Policy document outlines password requirements, data classification
     standards, and security incident reporting procedures to ensure corporate information
     protection and compliance.
   contains:
-  - password complexity and length requirements
-  - password rotation and history rules
+  - password complexity and rotation requirements
   - multi-factor authentication enforcement
-  - data classification categories and handling rules
+  - data classification levels and handling rules
   - access restrictions based on data classification
   - encryption requirements for restricted data
   - security incident definition and reporting procedures
-  - account lockout policies after password expiration
-  - MFA enrollment timelines
-  - reporting unauthorized access incidents
+  - account lockout and password history policies
+  - MFA enrollment timelines and methods
+  - data transmission and storage security policies
+  - incident escalation and notification protocols
 - id: finance_policy_2024
   name: Finance Policy 2024
   summary: This Finance Policy 2024 document outlines employee expense approval thresholds,
     project budget limits by department and clearance level, reimbursement procedures
-    including international expenses and dispute resolution, and vendor payment terms.
+    including international expenses and dispute processes, and vendor payment terms.
   contains:
   - employee expense approval thresholds by amount
   - required approvers for expenses
@@ -75,16 +74,15 @@ tables:
     security clearance, hire date, and managerial hierarchy.
   contains:
   - employee names
-  - employee email addresses
+  - employee emails
   - department assignments
   - security clearance levels
   - hire dates
   - manager-subordinate relationships
-  - organizational hierarchy
+  - corporate organizational structure
 - id: salary_bands
   name: Salary Bands
-  summary: This table lists salary ranges by clearance level and department within
-    an organization.
+  summary: This table contains salary ranges by clearance level and department.
   contains:
   - salary ranges
   - clearance levels
@@ -103,9 +101,9 @@ tables:
   - training completion dates
   - training expiry dates
   - training status tracking
-  - employee training scores
-  - training course names
+  - training scores
   - employee training history
+  - compliance training data
 - id: projects
   name: Projects
   summary: This table contains detailed information about various projects including

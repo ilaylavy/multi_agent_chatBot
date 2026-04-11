@@ -11,22 +11,22 @@ pdfs:
   type: pdf
   pages: 4
   sections:
-  - Flight Class Entitlements by Clearance Level
-  - Booking Rules
-  - Hotel Nightly Allowances
-  - Per Diem Rates
-  - Expense Reimbursement Process
+  - 'Section 1: Flight Class Entitlements by Clearance Level'
+  - 'Section 2: Booking Rules'
+  - 'Section 3: Hotel Nightly Allowances'
+  - 'Section 4: Per Diem Rates'
+  - 'Section 5: Expense Reimbursement Process'
   tags:
   - corporate travel policy
   - flight class entitlements
   - clearance levels
+  - booking rules
   - hotel allowances
   - per diem rates
   - expense reimbursement
-  - travel booking rules
-  - travel expenses
-  - manager approval
   - travel receipts
+  - manager approval
+  - travel expense claims
 - id: hr_handbook_v3
   filename: hr_handbook_v3.pdf
   type: pdf
@@ -62,16 +62,16 @@ pdfs:
   - 'Section 2: Data Classification'
   - 'Section 3: Security Incident Reporting'
   tags:
-  - IT security policy
-  - password requirements
-  - multi-factor authentication
+  - IT security
+  - password policy
   - data classification
+  - multi-factor authentication
   - security incident reporting
   - corporate data protection
   - access control
   - encryption
-  - password rotation
   - incident management
+  - information security
 - id: finance_policy_2024
   filename: finance_policy_2024.pdf
   type: pdf
@@ -107,7 +107,7 @@ tables:
     description: Security clearance level associated with the salary range
   - name: department
     type: string
-    description: Department within the organization
+    description: Department name within the organization
   - name: salary_min
     type: integer
     description: Minimum salary for the given clearance level and department
@@ -147,7 +147,8 @@ tables:
     description: Date when the employee was hired
   - name: manager_id
     type: float
-    description: Employee ID of the manager supervising this employee, if any
+    description: Employee ID of the manager supervising this employee, nullable if
+      no manager
   relationships:
   - manager_id links to employee.employee_id
 - id: training_records
@@ -170,13 +171,13 @@ tables:
     description: Date when the training was completed
   - name: expiry_date
     type: string
-    description: Date when the training certification or validity expires
+    description: Date when the training certification expires
   - name: status
     type: string
     description: Current status of the training (e.g., Completed, Expired)
   - name: score
     type: float
-    description: Score or grade achieved by the employee in the training
+    description: Score or grade achieved in the training
   relationships:
   - employee_id links to employees.employee_id
 - id: projects
