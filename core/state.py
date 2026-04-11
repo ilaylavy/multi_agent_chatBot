@@ -28,7 +28,7 @@ class Task(TypedDict):
     task_id:     str
     worker_type: str            # "librarian" | "data_scientist"
     description: str
-    source_id:   str
+    source_ids:  List[str]      # one or more manifest source IDs
     depends_on:  Optional[str]  # task_id of prerequisite, or None if independent
 
 
@@ -127,25 +127,25 @@ def router_view(state: AgentState) -> dict:
     }
 
 
-def librarian_view(state: AgentState, task: Task, manifest_detail: str) -> dict:
+def librarian_view(state: AgentState, task: Task, manifest_details: str) -> dict:
     """
-    Librarian sees: its single assigned task + manifest detail for its source only.
+    Librarian sees: its assigned task + manifest details for its source(s).
     Callers must pass the resolved task object and the pre-filtered manifest detail string.
     """
     return {
-        "task":            task,
-        "manifest_detail": manifest_detail,
+        "task":             task,
+        "manifest_details": manifest_details,
     }
 
 
-def data_scientist_view(state: AgentState, task: Task, manifest_detail: str) -> dict:
+def data_scientist_view(state: AgentState, task: Task, manifest_details: str) -> dict:
     """
-    Data Scientist sees: its single assigned task + manifest detail for its table only.
+    Data Scientist sees: its assigned task + manifest details for its table(s).
     Callers must pass the resolved task object and the pre-filtered manifest detail string.
     """
     return {
-        "task":            task,
-        "manifest_detail": manifest_detail,
+        "task":             task,
+        "manifest_details": manifest_details,
     }
 
 
@@ -182,7 +182,7 @@ def test_state():
         "chat_intent":          "",
         "rewritten_query":      "",
         "plan":                 [{"task_id": "t1", "worker_type": "data_scientist",
-                                  "description": "Look up Q3 revenue", "source_id": "financials"}],
+                                  "description": "Look up Q3 revenue", "source_ids": ["financials"]}],
         "manifest_context":     "financials: quarterly revenue table",
         "planner_reasoning":    "",
         "task_results":         {"t1": {"task_id": "t1", "worker_type": "data_scientist",
@@ -200,15 +200,15 @@ def test_state():
     }
 
     task = fake_state["plan"][0]
-    manifest_detail = "financials: columns = [quarter, revenue, expenses]"
+    manifest_details = "financials: columns = [quarter, revenue, expenses]"
 
     assert list(chat_agent_view(fake_state).keys()) == [
         "original_query", "conversation_history", "final_answer", "final_sources", "chat_intent"
     ]
     assert "retry_notes" not in planner_view(fake_state)   # empty string → omitted
     assert list(router_view(fake_state).keys()) == ["plan"]
-    assert list(librarian_view(fake_state, task, manifest_detail).keys()) == ["task", "manifest_detail"]
-    assert list(data_scientist_view(fake_state, task, manifest_detail).keys()) == ["task", "manifest_detail"]
+    assert list(librarian_view(fake_state, task, manifest_details).keys()) == ["task", "manifest_details"]
+    assert list(data_scientist_view(fake_state, task, manifest_details).keys()) == ["task", "manifest_details"]
     assert list(synthesizer_view(fake_state).keys()) == [
         "original_query", "plan", "task_results", "sources_used"
     ]

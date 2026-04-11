@@ -1,11 +1,12 @@
 """
 core/manifest.py — Manifest loader and formatter.
 
-Two public functions:
-  get_manifest_index()            → formatted string for the Planner prompt
-  get_manifest_detail(source_id)  → formatted string for a Worker prompt
+Public functions:
+  get_manifest_index()              → formatted string for the Planner prompt
+  get_manifest_detail(source_id)    → formatted string for a single Worker source
+  get_manifest_details(source_ids)  → combined formatted string for multiple sources
 
-Both cache their YAML reads in a module-level dict. Call
+All cache their YAML reads in a module-level dict. Call
 invalidate_manifest_cache() to clear the cache and force the next read to
 reload from disk — useful after running an ingestion script that adds new
 sources without restarting the server.
@@ -225,6 +226,16 @@ def get_manifest_detail(source_id: str) -> str:
         f"source_id '{source_id}' not found in manifest_detail.yaml. "
         f"Known IDs: {all_ids}"
     )
+
+
+def get_manifest_details(source_ids: list[str]) -> str:
+    """
+    Return combined detail blocks for multiple source_ids, separated by a blank line.
+
+    Each block is produced by get_manifest_detail(). Useful when a single task
+    references multiple sources (e.g. multi-table JOINs or cross-PDF search).
+    """
+    return "\n\n".join(get_manifest_detail(sid) for sid in source_ids)
 
 
 # ---------------------------------------------------------------------------

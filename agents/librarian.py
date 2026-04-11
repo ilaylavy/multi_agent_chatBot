@@ -19,7 +19,7 @@ import logging
 from typing import List
 
 from core.llm_config import _load_config, get_llm
-from core.manifest import get_manifest_detail
+from core.manifest import get_manifest_details
 from core.parse import parse_llm_json
 from core.reranker import get_reranker
 from core.retriever import ChromaRetriever, RetrieverInterface
@@ -43,8 +43,8 @@ _default_retriever = ChromaRetriever()
 
 _SYSTEM_PROMPT = f"""\
 You are a document retrieval specialist. You have been given a task and a set of
-text chunks retrieved from a PDF document. Your job is to identify which chunks
-are genuinely relevant to the task and return them.
+text chunks retrieved from one or more PDF documents. Your job is to identify which
+chunks are genuinely relevant to the task and return them.
 
 Rules:
   - Only return chunks that directly help answer the task description.
@@ -66,8 +66,8 @@ Respond with ONLY a JSON object matching this schema — no explanation, no mark
 """
 
 _USER_TEMPLATE = """\
-SOURCE MANIFEST DETAIL:
-{manifest_detail}
+SOURCE MANIFEST DETAIL(S):
+{manifest_details}
 
 TASK:
 {task_description}
@@ -83,14 +83,14 @@ Select the chunks that best answer the task. Return as JSON.
 # View function
 # ---------------------------------------------------------------------------
 
-def librarian_view(state: AgentState, task: Task, manifest_detail: str) -> dict:
+def librarian_view(state: AgentState, task: Task, manifest_details: str) -> dict:
     """
-    Returns only the assigned task and manifest detail for that source.
+    Returns only the assigned task and manifest details for its source(s).
     The LLM prompt is built from this view — nothing else from state is visible.
     """
     return {
-        "task":            task,
-        "manifest_detail": manifest_detail,
+        "task":             task,
+        "manifest_details": manifest_details,
     }
 
 
@@ -128,20 +128,21 @@ async def librarian_worker(
     if retriever is None:
         retriever = _default_retriever
 
-    manifest_detail = get_manifest_detail(task["source_id"])
-    view = librarian_view(state, task, manifest_detail)
+    source_ids = task["source_ids"]
+    manifest_details = get_manifest_details(source_ids)
+    view = librarian_view(state, task, manifest_details)
 
-    # ── Retrieval ────────────────────────────────────────────────
+    # ── Retrieval — parallel search across all source collections ──
     search_query = clean_search_query(task["description"])
-    chunks: List[Chunk] = await retriever.search(
-        query=search_query,
-        source_id=task["source_id"],
-        top_k=_INITIAL_FETCH,
+    chunk_lists: list[List[Chunk]] = await asyncio.gather(
+        *(retriever.search(query=search_query, source_id=sid, top_k=_INITIAL_FETCH)
+          for sid in source_ids)
     )
+    all_chunks: List[Chunk] = [c for chunk_list in chunk_lists for c in chunk_list]
 
     # ── Rerank — FlashRank when enabled, passthrough when disabled ─
-    chunks = get_reranker().rerank(query=search_query, chunks=chunks)
-    chunks = chunks[:_FINAL_TOP_K]
+    all_chunks = get_reranker().rerank(query=search_query, chunks=all_chunks)
+    chunks = all_chunks[:_FINAL_TOP_K]
 
     # ── Build chunks block for LLM prompt ────────────────────────
     if chunks:
@@ -151,10 +152,10 @@ async def librarian_worker(
             for i, c in enumerate(chunks)
         )
     else:
-        chunks_block = "(no chunks retrieved — collection may not be ingested yet)"
+        chunks_block = "(no chunks retrieved — collection(s) may not be ingested yet)"
 
     user_message = _USER_TEMPLATE.format(
-        manifest_detail=view["manifest_detail"],
+        manifest_details=view["manifest_details"],
         task_description=view["task"]["description"],
         chunks_block=chunks_block,
     )
@@ -206,7 +207,7 @@ def test_librarian():
         "task_id":     "t2",
         "worker_type": "librarian",
         "description": "Find flight class entitlements for clearance level A",
-        "source_id":   "travel_policy_2024",
+        "source_ids":  ["travel_policy_2024"],
     }
 
     fake_state: AgentState = {
@@ -252,17 +253,17 @@ def test_librarian():
 
     patch_target = f"{__name__}.get_llm"
 
-    # ── Test 1: librarian_view returns only task + manifest_detail ─
+    # ── Test 1: librarian_view returns only task + manifest_details ─
     view = librarian_view(fake_state, fake_task, "some detail")
-    assert set(view.keys()) == {"task", "manifest_detail"}
+    assert set(view.keys()) == {"task", "manifest_details"}
     assert view["task"] is fake_task
-    print("PASS: librarian_view returns only task and manifest_detail")
+    print("PASS: librarian_view returns only task and manifest_details")
 
     # ── Test 2: worker returns TaskResult with success=True ────────
     with patch(patch_target, return_value=mock_llm), \
-         patch("agents.librarian.get_manifest_detail", return_value="fake manifest detail") \
+         patch("agents.librarian.get_manifest_details", return_value="fake manifest detail") \
          if __name__ == "__main__" else \
-         patch("agents.librarian.get_manifest_detail", return_value="fake manifest detail"):
+         patch("agents.librarian.get_manifest_details", return_value="fake manifest detail"):
 
         result: TaskResult = asyncio.run(
             librarian_worker(fake_state, fake_task, retriever=mock_retriever)
@@ -284,7 +285,7 @@ def test_librarian():
     # ── Test 4: retriever was called with correct args ─────────────
     mock_retriever.search.assert_called_once_with(
         query=fake_task["description"],
-        source_id=fake_task["source_id"],
+        source_id="travel_policy_2024",
         top_k=_INITIAL_FETCH,
     )
     print("PASS: retriever.search called with correct query, source_id, top_k=20")
@@ -295,9 +296,9 @@ def test_librarian():
     mock_llm.ainvoke = AsyncMock(return_value=bad_response)
 
     with patch(patch_target, return_value=mock_llm), \
-         patch("agents.librarian.get_manifest_detail", return_value="fake manifest detail") \
+         patch("agents.librarian.get_manifest_details", return_value="fake manifest detail") \
          if __name__ == "__main__" else \
-         patch("agents.librarian.get_manifest_detail", return_value="fake manifest detail"):
+         patch("agents.librarian.get_manifest_details", return_value="fake manifest detail"):
         try:
             asyncio.run(librarian_worker(fake_state, fake_task, retriever=mock_retriever))
             assert False, "Should have raised ValueError"
@@ -315,7 +316,7 @@ def test_librarian():
 
     reranker_patch_target = f"{__name__}.get_reranker"
     with patch(patch_target, return_value=mock_llm), \
-         patch("agents.librarian.get_manifest_detail", return_value="fake manifest detail"), \
+         patch("agents.librarian.get_manifest_details", return_value="fake manifest detail"), \
          patch(reranker_patch_target, return_value=mock_reranker):
 
         asyncio.run(librarian_worker(fake_state, fake_task, retriever=mock_retriever))
@@ -334,7 +335,7 @@ def test_librarian():
     with patch(reranker_patch_target) as mock_get:
         mock_get.return_value = PassthroughRanker()
         with patch(patch_target, return_value=mock_llm), \
-             patch("agents.librarian.get_manifest_detail", return_value="fake manifest detail"):
+             patch("agents.librarian.get_manifest_details", return_value="fake manifest detail"):
             asyncio.run(librarian_worker(fake_state, fake_task, retriever=mock_retriever))
         mock_get.assert_called_once()
         assert isinstance(mock_get.return_value, PassthroughRanker)
@@ -364,7 +365,7 @@ def test_librarian():
     mock_llm.ainvoke = capture_llm
 
     with patch(patch_target, return_value=mock_llm), \
-         patch("agents.librarian.get_manifest_detail", return_value="fake manifest detail"), \
+         patch("agents.librarian.get_manifest_details", return_value="fake manifest detail"), \
          patch(reranker_patch_target, return_value=PassthroughRanker()):
         asyncio.run(librarian_worker(fake_state, enriched_task, retriever=mock_retriever))
 
@@ -386,6 +387,64 @@ def test_librarian():
     assert clean_search_query("simple description") == "simple description"
     assert clean_search_query("") == ""
     print("PASS: clean_search_query is a no-op for plain descriptions")
+
+    # ── Test 9: multi-source task searches all collections in parallel ──
+    multi_task: Task = {
+        "task_id":     "t_multi",
+        "worker_type": "librarian",
+        "description": "Find travel and security policies for clearance level A",
+        "source_ids":  ["travel_policy_2024", "it_security_policy"],
+    }
+
+    chunks_from_travel: List[Chunk] = [
+        {"chunk_text": "Level A: Business Class on 4+ hour flights.",
+         "source_pdf": "travel_policy.pdf", "page_number": 3, "relevance_score": 0.95},
+    ]
+    chunks_from_security: List[Chunk] = [
+        {"chunk_text": "Level A employees must rotate passwords every 30 days.",
+         "source_pdf": "it_security.pdf", "page_number": 7, "relevance_score": 0.88},
+    ]
+
+    async def mock_search_multi(query, source_id, top_k):
+        if source_id == "travel_policy_2024":
+            return chunks_from_travel
+        elif source_id == "it_security_policy":
+            return chunks_from_security
+        return []
+
+    mock_retriever_multi = MagicMock(spec=RetrieverInterface)
+    mock_retriever_multi.search = AsyncMock(side_effect=mock_search_multi)
+
+    # LLM selects both chunks
+    multi_llm_output = json.dumps({
+        "selected_chunks": [
+            {"chunk_text": "Level A: Business Class on 4+ hour flights.",
+             "source_pdf": "travel_policy.pdf", "page_number": 3, "relevance_score": 0.95},
+            {"chunk_text": "Level A employees must rotate passwords every 30 days.",
+             "source_pdf": "it_security.pdf", "page_number": 7, "relevance_score": 0.88},
+        ]
+    })
+    mock_response_multi = MagicMock()
+    mock_response_multi.content = multi_llm_output
+    mock_llm.ainvoke = AsyncMock(return_value=mock_response_multi)
+
+    with patch(patch_target, return_value=mock_llm), \
+         patch("agents.librarian.get_manifest_details", return_value="fake multi detail"), \
+         patch(reranker_patch_target, return_value=PassthroughRanker()):
+        result_multi: TaskResult = asyncio.run(
+            librarian_worker(fake_state, multi_task, retriever=mock_retriever_multi)
+        )
+
+    assert result_multi["success"] is True
+    out_multi = json.loads(result_multi["output"])
+    assert len(out_multi) == 2, f"Expected 2 chunks from 2 sources, got {len(out_multi)}"
+    # Verify retriever was called twice (once per source_id)
+    assert mock_retriever_multi.search.call_count == 2, \
+        f"Retriever must be called once per source_id, got {mock_retriever_multi.search.call_count}"
+    source_pdfs = {c["source_pdf"] for c in out_multi}
+    assert "travel_policy.pdf" in source_pdfs and "it_security.pdf" in source_pdfs, \
+        f"Results must include chunks from both PDFs, got: {source_pdfs}"
+    print(f"PASS: multi-source task searched 2 collections, returned {len(out_multi)} chunks from {source_pdfs}")
 
     print("\nPASS: all librarian tests passed")
 

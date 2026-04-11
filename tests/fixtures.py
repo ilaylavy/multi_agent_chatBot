@@ -68,8 +68,8 @@ PLANNER_RETRY_STATE: dict[str, Any] = {
 AUDITOR_STATE_PASS: dict[str, Any] = {
     "original_query": "Can Noa fly Business Class?",
     "plan": [
-        {"task_id": "t1", "worker_type": "data_scientist", "description": "Get Noa's clearance level", "source_id": "employees"},
-        {"task_id": "t2", "worker_type": "librarian", "description": "Find flight rules for clearance level A", "source_id": "travel_policy_2024"},
+        {"task_id": "t1", "worker_type": "data_scientist", "description": "Get Noa's clearance level", "source_ids": ["employees"]},
+        {"task_id": "t2", "worker_type": "librarian", "description": "Find flight rules for clearance level A", "source_ids": ["travel_policy_2024"]},
     ],
     "draft_answer": "Noa holds clearance level A. According to Section 1 of the Travel Policy 2024, employees with clearance level A are entitled to Business Class on flights over 4 hours.",
     "sources_used": [
@@ -94,8 +94,8 @@ AUDITOR_STATE_FAIL: dict[str, Any] = {
 SYNTHESIZER_STATE: dict[str, Any] = {
     "original_query": "Can Noa fly Business Class?",
     "plan": [
-        {"task_id": "t1", "worker_type": "data_scientist", "description": "Get Noa's clearance level", "source_id": "employees"},
-        {"task_id": "t2", "worker_type": "librarian", "description": "Find flight rules for clearance level A", "source_id": "travel_policy_2024"},
+        {"task_id": "t1", "worker_type": "data_scientist", "description": "Get Noa's clearance level", "source_ids": ["employees"]},
+        {"task_id": "t2", "worker_type": "librarian", "description": "Find flight rules for clearance level A", "source_ids": ["travel_policy_2024"]},
     ],
     "task_results": {
         "t1": {

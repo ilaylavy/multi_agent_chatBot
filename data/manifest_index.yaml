@@ -9,52 +9,65 @@
 pdfs:
 - id: travel_policy_2024
   name: Travel Policy 2024
-  summary: The Travel Policy 2024 outlines flight class entitlements, booking rules,
-    hotel allowances, per diem rates, and expense reimbursement processes based on
-    employee clearance levels.
+  summary: This document outlines the 2024 corporate travel policy detailing flight
+    class entitlements, booking rules, hotel allowances, per diem rates, and expense
+    reimbursement procedures based on employee clearance levels.
   contains:
-  - flight class entitlements by clearance level
-  - advance booking rules
-  - hotel nightly reimbursement limits
-  - per diem meal and incidental rates
-  - expense claim submission process
+  - flight class entitlements by employee clearance level
+  - advance flight booking requirements and exceptions
+  - hotel accommodation nightly reimbursement limits
+  - per diem meal and incidental expense rates
+  - expense claim submission deadlines and receipt requirements
+  - manager and finance department approval processes
+  - travel expense reimbursement policies
+  - travel budget control measures
+  - travel policy compliance rules
 - id: hr_handbook_v3
   name: Hr Handbook V3
-  summary: The HR Handbook v3 outlines onboarding procedures, leave policies, and
-    performance review processes for employees.
+  summary: This HR Handbook v3 outlines the onboarding process, leave policies, and
+    performance review procedures for employees.
   contains:
-  - onboarding checklist requirements
-  - employment document submission
-  - IT setup procedures
-  - annual leave entitlements
-  - sick leave policy
-  - parental leave options
-  - performance review schedule
-  - employee rating scale
+  - employee onboarding checklist and procedures
+  - required employment documents for new hires
+  - IT equipment provisioning and security setup
+  - leave entitlements by clearance level
+  - annual, sick, and parental leave policies
+  - leave request and approval process
+  - performance review schedule and documentation
+  - employee performance rating scale
+  - mandatory compliance training requirements
+  - employee role and goal setting during onboarding
 - id: it_security_policy
   name: It Security Policy
-  summary: The document outlines IT security policies including password requirements,
-    data classification, and security incident reporting.
+  summary: This IT Security Policy document outlines password requirements, data classification
+    standards, and security incident reporting procedures to ensure corporate information
+    protection and compliance.
   contains:
-  - password complexity requirements
-  - password rotation policy
-  - multi-factor authentication methods
-  - data classification categories
-  - restricted data handling procedures
+  - password complexity and length requirements
+  - password rotation and history rules
+  - multi-factor authentication enforcement
+  - data classification categories and handling rules
+  - access restrictions based on data classification
+  - encryption requirements for restricted data
+  - security incident definition and reporting procedures
+  - account lockout and password reset processes
+  - data transmission policies for sensitive information
+  - employee data protection policies
 - id: finance_policy_2024
   name: Finance Policy 2024
   summary: The Finance Policy 2024 outlines expense approval thresholds, project budget
-    limits, reimbursement procedures, and vendor payment terms.
+    limits by department and clearance level, reimbursement procedures including international
+    expenses and dispute resolution, and vendor payment terms.
   contains:
-  - expense approval thresholds
-  - project budget limits
-  - reimbursement procedures
-  - vendor payment terms
-  - international expense pre-approval
-  - budget overrun approvals
-  - disputed reimbursement claims
-  - vendor invoice processing
-  - currency conversion for expenses
+  - expense approval thresholds by amount and approvers
+  - receipt requirements and turnaround times for expenses
+  - monthly project budget limits by department and clearance level
+  - budget overrun approval requirements
+  - reimbursement claim submission deadlines and processing times
+  - cross-references to travel expense policies
+  - international expense pre-approval and currency conversion rules
+  - dispute and appeal process for reimbursement claims
+  - vendor invoice payment terms and early payment discount criteria
 tables:
 - id: employees
   name: Employees

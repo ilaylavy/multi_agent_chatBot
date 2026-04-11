@@ -32,37 +32,40 @@ logger = logging.getLogger(__name__)
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _build_source_ref(task: Task) -> SourceRef:
+def _build_source_refs(task: Task) -> list[SourceRef]:
     """
-    Build a SourceRef for a task by looking up the manifest.
+    Build a list of SourceRefs for a task by looking up the manifest.
     source_type is derived from the manifest detail section (pdfs → pdf,
     tables → entry["type"]).  label comes from the manifest index name field.
     """
-    source_id = task["source_id"]
     raw_detail = get_manifest_detail_raw()
     raw_index  = get_manifest_index_raw()
+    refs: list[SourceRef] = []
 
-    # Determine source_type from which section the source lives in
-    source_type = "unknown"
-    for entry in raw_detail.get("pdfs", []):
-        if entry["id"] == source_id:
-            source_type = "pdf"
-            break
-    else:
-        for entry in raw_detail.get("tables", []):
+    for source_id in task["source_ids"]:
+        # Determine source_type from which section the source lives in
+        source_type = "unknown"
+        for entry in raw_detail.get("pdfs", []):
             if entry["id"] == source_id:
-                source_type = entry.get("type", "csv")
+                source_type = "pdf"
                 break
+        else:
+            for entry in raw_detail.get("tables", []):
+                if entry["id"] == source_id:
+                    source_type = entry.get("type", "csv")
+                    break
 
-    # Get human-readable label from manifest index
-    label = source_id  # fallback
-    for section in ("pdfs", "tables"):
-        for entry in raw_index.get(section, []):
-            if entry["id"] == source_id:
-                label = entry.get("name", source_id)
-                break
+        # Get human-readable label from manifest index
+        label = source_id  # fallback
+        for section in ("pdfs", "tables"):
+            for entry in raw_index.get(section, []):
+                if entry["id"] == source_id:
+                    label = entry.get("name", source_id)
+                    break
 
-    return SourceRef(source_id=source_id, source_type=source_type, label=label)
+        refs.append(SourceRef(source_id=source_id, source_type=source_type, label=label))
+
+    return refs
 
 
 async def _dispatch_task(state: AgentState, task: Task) -> TaskResult:
@@ -168,9 +171,11 @@ async def router_node(state: AgentState) -> dict:
     seen_source_ids: set[str] = set()
     sources_used: list[SourceRef] = []
     for task, result in zip(plan, results):
-        if result["success"] and task["source_id"] not in seen_source_ids:
-            seen_source_ids.add(task["source_id"])
-            sources_used.append(_build_source_ref(task))
+        if result["success"]:
+            for ref in _build_source_refs(task):
+                if ref["source_id"] not in seen_source_ids:
+                    seen_source_ids.add(ref["source_id"])
+                    sources_used.append(ref)
 
     # Unpack chunks from successful Librarian results for RAGAS logging.
     # Librarian output is a JSON array of Chunk dicts.
@@ -203,14 +208,14 @@ def test_router():
         "task_id":     "t1",
         "worker_type": "librarian",
         "description": "Find flight class entitlements for clearance level A",
-        "source_id":   "travel_policy_2024",
+        "source_ids":  ["travel_policy_2024"],
         "depends_on":  None,
     }
     ds_task: Task = {
         "task_id":     "t2",
         "worker_type": "data_scientist",
         "description": "Get Noa's clearance level from employees table",
-        "source_id":   "employees",
+        "source_ids":  ["employees"],
         "depends_on":  None,
     }
 
@@ -352,14 +357,14 @@ def test_router():
         "task_id":     "t1",
         "worker_type": "data_scientist",
         "description": "Get Noa's clearance level from employees table",
-        "source_id":   "employees",
+        "source_ids":  ["employees"],
         "depends_on":  None,
     }
     dep_lib_task: Task = {
         "task_id":     "t2",
         "worker_type": "librarian",
         "description": "Find flight class entitlements for the retrieved clearance level",
-        "source_id":   "travel_policy_2024",
+        "source_ids":  ["travel_policy_2024"],
         "depends_on":  "t1",
     }
 
@@ -411,14 +416,14 @@ def test_router():
         "task_id":     "t1",
         "worker_type": "data_scientist",
         "description": "Get employee clearance level",
-        "source_id":   "employees",
+        "source_ids":  ["employees"],
         "depends_on":  None,
     }
     skip_lib_task: Task = {
         "task_id":     "t2",
         "worker_type": "librarian",
         "description": "Find policy for the retrieved clearance level",
-        "source_id":   "travel_policy_2024",
+        "source_ids":  ["travel_policy_2024"],
         "depends_on":  "t1",
     }
 
@@ -458,17 +463,17 @@ def test_router():
     dup_task_1: Task = {
         "task_id": "t1", "worker_type": "data_scientist",
         "description": "Get Noa's clearance level",
-        "source_id": "employees", "depends_on": None,
+        "source_ids": ["employees"], "depends_on": None,
     }
     dup_task_2: Task = {
         "task_id": "t2", "worker_type": "data_scientist",
         "description": "Get Noa's department",
-        "source_id": "employees", "depends_on": None,
+        "source_ids": ["employees"], "depends_on": None,
     }
     dup_task_3: Task = {
         "task_id": "t3", "worker_type": "librarian",
         "description": "Find flight rules",
-        "source_id": "travel_policy_2024", "depends_on": None,
+        "source_ids": ["travel_policy_2024"], "depends_on": None,
     }
 
     dup_state: AgentState = {**fake_state, "plan": [dup_task_1, dup_task_2, dup_task_3]}

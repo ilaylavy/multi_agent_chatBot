@@ -50,7 +50,7 @@ Respond with ONLY a JSON object — no explanation, no markdown:
 """
 
 _TASK_RESULT_TEMPLATE = """\
-Task {task_id} [{worker_type}] — source: {source_id}
+Task {task_id} [{worker_type}] — sources: {source_ids}
 Description: {description}
 Status: {status}
 Result:
@@ -106,7 +106,7 @@ def _format_plan_block(view: dict) -> str:
         status = "FAILED" if failed else "succeeded"
         lines.append(
             f"  - [{task['task_id']}] {task['description']} "
-            f"(source: {task['source_id']}, status: {status})"
+            f"(sources: {', '.join(task['source_ids'])}, status: {status})"
         )
     return "\n".join(lines)
 
@@ -134,7 +134,7 @@ def _format_results_block(view: dict) -> str:
         blocks.append(_TASK_RESULT_TEMPLATE.format(
             task_id=task_id,
             worker_type=task["worker_type"],
-            source_id=task["source_id"],
+            source_ids=", ".join(task["source_ids"]),
             description=task["description"],
             status=status,
             result_body=result_body,
@@ -354,17 +354,17 @@ def test_synthesizer():
         "original_query": "What flight class are Dan Cohen and Tal Mizrahi entitled to?",
         "plan": [
             {"task_id": "t1", "worker_type": "data_scientist",
-             "description": "Get Dan Cohen's clearance level", "source_id": "employees",
+             "description": "Get Dan Cohen's clearance level", "source_ids": ["employees"],
              "depends_on": None},
             {"task_id": "t2", "worker_type": "librarian",
              "description": "Find flight entitlements for clearance level B",
-             "source_id": "travel_policy_2024", "depends_on": "t1"},
+             "source_ids": ["travel_policy_2024"], "depends_on": "t1"},
             {"task_id": "t3", "worker_type": "data_scientist",
-             "description": "Get Tal Mizrahi's clearance level", "source_id": "employees",
+             "description": "Get Tal Mizrahi's clearance level", "source_ids": ["employees"],
              "depends_on": None},
             {"task_id": "t4", "worker_type": "librarian",
              "description": "Find flight entitlements for clearance level D",
-             "source_id": "travel_policy_2024", "depends_on": "t3"},
+             "source_ids": ["travel_policy_2024"], "depends_on": "t3"},
         ],
         "task_results": {
             "t1": {"task_id": "t1", "worker_type": "data_scientist",
