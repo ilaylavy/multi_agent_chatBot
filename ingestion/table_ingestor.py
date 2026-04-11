@@ -255,7 +255,7 @@ async def ingest_table(
         "id":              source_id,
         "filename":        file_path.name,
         "type":            file_type,
-        "base_path":       "data/tables/",
+        "base_path":       file_path.resolve().parent.relative_to(_PROJECT_ROOT).as_posix() + "/",
         "row_count_approx": row_count,
         "columns":         columns,
         "relationships":   relationships,
