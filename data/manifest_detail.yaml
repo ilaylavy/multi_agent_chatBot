@@ -70,7 +70,11 @@ pdfs:
   - corporate data protection
   - access control
   - encryption
+<<<<<<< HEAD
   - incident management
+=======
+  - incident response
+>>>>>>> 1345b59a9b640e39aa83f0d4b9f4026706b8d926
   - information security
 - id: finance_policy_2024
   filename: finance_policy_2024.pdf
@@ -96,7 +100,7 @@ tables:
 - id: salary_bands
   filename: salary_bands.sqlite
   type: sqlite
-  base_path: data/tables/
+  base_path: tests/fixtures/tables/
   row_count_approx: 16
   columns:
   - name: id
@@ -124,7 +128,7 @@ tables:
 - id: employees
   filename: employees.csv
   type: csv
-  base_path: data/tables/
+  base_path: tests/fixtures/tables/
   row_count_approx: 10
   columns:
   - name: employee_id
@@ -147,14 +151,18 @@ tables:
     description: Date when the employee was hired
   - name: manager_id
     type: float
+<<<<<<< HEAD
     description: Employee ID of the manager supervising this employee, nullable if
       no manager
+=======
+    description: Employee ID of the employee's manager, if applicable
+>>>>>>> 1345b59a9b640e39aa83f0d4b9f4026706b8d926
   relationships:
-  - manager_id links to employee.employee_id
+  - manager_id links to employee_id in the same table
 - id: training_records
   filename: training_records.csv
   type: csv
-  base_path: data/tables/
+  base_path: tests/fixtures/tables/
   row_count_approx: 25
   columns:
   - name: record_id
@@ -183,7 +191,7 @@ tables:
 - id: projects
   filename: projects.csv
   type: csv
-  base_path: data/tables/
+  base_path: tests/fixtures/tables/
   row_count_approx: 12
   columns:
   - name: project_id
