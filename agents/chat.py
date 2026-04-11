@@ -297,6 +297,13 @@ async def chat_node(state: AgentState) -> dict:
             intent          = data["intent"]
             rewritten_query = data.get("rewritten_query") or view["original_query"]
             response_text   = data.get("response")
+            logger.debug(
+                "[%s] Chat classify — intent=%s rewritten_query=%s query_to_planner=%s",
+                state.get("session_id", "?"),
+                intent,
+                rewritten_query,
+                rewritten_query if intent == "PLAN" else "(not routed to planner)",
+            )
         except KeyError as exc:
             raise ValueError(
                 f"Missing key in classify LLM output: {exc}\nRaw output: {response.content}"

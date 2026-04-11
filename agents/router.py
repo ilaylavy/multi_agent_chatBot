@@ -142,6 +142,16 @@ async def router_node(state: AgentState) -> dict:
             else:
                 enriched_tasks.append(task)
 
+        for task in enriched_tasks:
+            logger.debug(
+                "[%s][%s] Router dispatch — worker=%s source_ids=%s description=%s",
+                state.get("session_id", "?"),
+                task["task_id"],
+                task["worker_type"],
+                task.get("source_ids", []),
+                task["description"][:120],
+            )
+
         # Record skipped tasks immediately — do not call their workers
         for task in skipped:
             dep_id = task["depends_on"]
@@ -178,14 +188,16 @@ async def router_node(state: AgentState) -> dict:
                     sources_used.append(ref)
 
     # Unpack chunks from successful Librarian results for RAGAS logging.
-    # Librarian output is a JSON array of Chunk dicts.
+    # Librarian output is a JSON dict with "selected_chunks" key (or legacy list).
     retrieved_chunks: list = []
     for result in results:
         if result["success"] and result["worker_type"] == "librarian":
             try:
-                chunks = json.loads(result["output"])
-                if isinstance(chunks, list):
-                    retrieved_chunks.extend(chunks)
+                parsed = json.loads(result["output"])
+                if isinstance(parsed, dict) and "selected_chunks" in parsed:
+                    retrieved_chunks.extend(parsed["selected_chunks"])
+                elif isinstance(parsed, list):
+                    retrieved_chunks.extend(parsed)
             except (json.JSONDecodeError, TypeError):
                 pass  # malformed output — skip silently
 

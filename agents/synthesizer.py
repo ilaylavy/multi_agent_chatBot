@@ -155,6 +155,13 @@ async def synthesizer_node(state: AgentState) -> dict:
         if view["task_results"].get(task["task_id"], {}).get("success") is False
     )
 
+    logger.debug(
+        "[%s] Synthesizer input — tasks=%d failed=%d",
+        state.get("session_id", "?"),
+        n_tasks,
+        n_failed,
+    )
+
     all_failed_block = ""
     if n_tasks > 0 and n_failed == n_tasks:
         error_lines = "\n".join(
@@ -185,6 +192,12 @@ async def synthesizer_node(state: AgentState) -> dict:
         raise ValueError(
             f"Missing key in LLM output: {exc}\nRaw output: {response.content}"
         ) from exc
+
+    logger.debug(
+        "[%s] Synthesizer output — draft_len=%d",
+        state.get("session_id", "?"),
+        len(draft_answer),
+    )
 
     return {
         "draft_answer":       draft_answer,

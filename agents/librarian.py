@@ -134,15 +134,34 @@ async def librarian_worker(
 
     # ── Retrieval — parallel search across all source collections ──
     search_query = clean_search_query(task["description"])
+    logger.debug(
+        "[%s] Librarian search — query=%r source_ids=%s",
+        task["task_id"],
+        search_query,
+        source_ids,
+    )
     chunk_lists: list[List[Chunk]] = await asyncio.gather(
         *(retriever.search(query=search_query, source_id=sid, top_k=_INITIAL_FETCH)
           for sid in source_ids)
     )
     all_chunks: List[Chunk] = [c for chunk_list in chunk_lists for c in chunk_list]
+    chunks_retrieved_count = len(all_chunks)
+    logger.debug(
+        "[%s] Librarian retrieval — chunks_returned=%d",
+        task["task_id"],
+        chunks_retrieved_count,
+    )
 
     # ── Rerank — FlashRank when enabled, passthrough when disabled ─
     all_chunks = get_reranker().rerank(query=search_query, chunks=all_chunks)
     chunks = all_chunks[:_FINAL_TOP_K]
+    if chunks:
+        logger.debug(
+            "[%s] Librarian rerank — top_score=%.4f top_preview=%s",
+            task["task_id"],
+            chunks[0]["relevance_score"],
+            chunks[0]["chunk_text"][:100],
+        )
 
     # ── Build chunks block for LLM prompt ────────────────────────
     if chunks:
@@ -183,10 +202,28 @@ async def librarian_worker(
             f"Missing key in LLM output: {exc}\nRaw output: {response.content}"
         ) from exc
 
+    logger.debug(
+        "[%s] Librarian LLM filter — applied=True final_chunks=%d",
+        task["task_id"],
+        len(selected),
+    )
+
+    output_data = {
+        "chromadb_query":      search_query,
+        "chunks_retrieved":    chunks_retrieved_count,
+        "llm_filter_applied":  True,
+        "top_score":           chunks[0]["relevance_score"] if chunks else None,
+        "chunks": [
+            {"score": c["relevance_score"], "text": c["chunk_text"][:150]}
+            for c in chunks
+        ],
+        "selected_chunks":     selected,
+    }
+
     return TaskResult(
         task_id=task["task_id"],
         worker_type="librarian",
-        output=json.dumps(selected),
+        output=json.dumps(output_data),
         success=True,
         error=None,
     )
@@ -275,12 +312,17 @@ def test_librarian():
     assert result["error"]       is None
     print("PASS: librarian_worker returns TaskResult with success=True")
 
-    # ── Test 3: output contains the selected chunks ────────────────
-    output_chunks = json.loads(result["output"])
-    assert len(output_chunks) == 1
-    assert "Business Class" in output_chunks[0]["chunk_text"]
-    assert output_chunks[0]["page_number"] == 3
-    print(f"PASS: output contains {len(output_chunks)} selected chunk(s)")
+    # ── Test 3: output contains the selected chunks and diagnostics ─
+    output_data = json.loads(result["output"])
+    assert isinstance(output_data, dict), "Output should be a dict with diagnostics"
+    assert "chromadb_query" in output_data
+    assert "chunks_retrieved" in output_data
+    assert "selected_chunks" in output_data
+    selected = output_data["selected_chunks"]
+    assert len(selected) == 1
+    assert "Business Class" in selected[0]["chunk_text"]
+    assert selected[0]["page_number"] == 3
+    print(f"PASS: output contains {len(selected)} selected chunk(s) with diagnostics")
 
     # ── Test 4: retriever was called with correct args ─────────────
     mock_retriever.search.assert_called_once_with(
@@ -436,7 +478,8 @@ def test_librarian():
         )
 
     assert result_multi["success"] is True
-    out_multi = json.loads(result_multi["output"])
+    out_multi_data = json.loads(result_multi["output"])
+    out_multi = out_multi_data["selected_chunks"]
     assert len(out_multi) == 2, f"Expected 2 chunks from 2 sources, got {len(out_multi)}"
     # Verify retriever was called twice (once per source_id)
     assert mock_retriever_multi.search.call_count == 2, \
