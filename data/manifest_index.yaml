@@ -20,109 +20,79 @@ pdfs:
   - expense claim submission deadlines and receipt requirements
   - manager and finance department approval processes
   - travel expense reimbursement policies
-<<<<<<< HEAD
-  - travel budget control measures
-  - travel policy compliance rules
-=======
+  - travel booking and reimbursement compliance rules
   - clearance level based travel benefits and restrictions
-  - policy update schedule based on Consumer Price Index
->>>>>>> 1345b59a9b640e39aa83f0d4b9f4026706b8d926
 - id: hr_handbook_v3
   name: Hr Handbook V3
   summary: This HR Handbook v3 outlines the onboarding process, leave policies, and
     performance review procedures for employees.
   contains:
-<<<<<<< HEAD
-  - onboarding checklist requirements
-  - required employment documents for new hires
-  - IT setup and security protocols for new employees
-  - leave entitlements based on clearance levels
-  - annual leave carry-over rules
-  - sick leave usage and medical certificate policy
-  - paid and unpaid parental leave options
-  - performance review schedule and process
-=======
   - employee onboarding checklist and procedures
   - required employment documentation for new hires
   - IT equipment provisioning and security setup
-  - leave entitlements by clearance level
-  - annual, sick, and parental leave policies
-  - leave request and approval process
+  - leave entitlements based on clearance levels
+  - annual, sick, and parental leave policies and rules
+  - leave request submission and approval process
   - performance review schedule and documentation
->>>>>>> 1345b59a9b640e39aa83f0d4b9f4026706b8d926
-  - employee performance rating scale
-  - mandatory compliance training requirements
-  - employee role expectation meetings
+  - employee performance rating scale and criteria
 - id: it_security_policy
   name: It Security Policy
   summary: This IT Security Policy document outlines password requirements, data classification
     standards, and security incident reporting procedures to ensure corporate information
     protection and compliance.
   contains:
-<<<<<<< HEAD
-  - password complexity and rotation requirements
-  - multi-factor authentication enforcement
-  - data classification levels and handling rules
-=======
   - password complexity and rotation rules
   - multi-factor authentication enforcement
-  - data classification levels and handling requirements
->>>>>>> 1345b59a9b640e39aa83f0d4b9f4026706b8d926
+  - data classification levels and handling procedures
   - access restrictions based on data classification
   - encryption requirements for restricted data
-  - security incident definition and reporting procedures
+  - security incident definition and reporting protocols
   - account lockout and password history policies
-<<<<<<< HEAD
   - MFA enrollment timelines and methods
-  - data transmission and storage security policies
-=======
-  - MFA enrollment timelines
-  - data transmission security policies
->>>>>>> 1345b59a9b640e39aa83f0d4b9f4026706b8d926
-  - incident escalation and notification protocols
+  - requirements for secure data transmission
+  - incident reporting and escalation procedures
 - id: finance_policy_2024
   name: Finance Policy 2024
-  summary: This Finance Policy 2024 document outlines expense approval thresholds,
+  summary: This Finance Policy 2024 document outlines employee expense approval thresholds,
     project budget limits by department and clearance level, reimbursement procedures
-    including international expenses and dispute processes, and vendor payment terms.
+    including international expenses and dispute resolution, and vendor payment terms.
   contains:
-  - expense approval thresholds by amount
+  - employee expense approval thresholds by amount
   - required approvers for expenses
   - receipt and turnaround time requirements
   - monthly project budget limits by department and clearance level
-  - budget overrun approval process
-  - expense reimbursement submission and processing
-  - international expense pre-approval and currency conversion
+  - budget overrun approval requirements
+  - expense reimbursement submission and processing procedures
+  - international expense pre-approval and currency conversion rules
   - dispute and appeal process for reimbursement claims
-  - vendor invoice payment terms and early payment discounts
+  - vendor invoice payment terms and early payment discount criteria
 tables:
 - id: employees
   name: Employees
   summary: This table contains employee information including personal details, department,
-    security clearance, hire date, and managerial relationships.
+    security clearance, hire date, and managerial hierarchy.
   contains:
   - employee names
-  - employee emails
+  - employee email addresses
   - department assignments
   - security clearance levels
   - hire dates
-  - manager-subordinate relationships
-<<<<<<< HEAD
-  - corporate organizational structure
-=======
->>>>>>> 1345b59a9b640e39aa83f0d4b9f4026706b8d926
+  - manager relationships
+  - organizational hierarchy
+  - employee identifiers
 - id: salary_bands
   name: Salary Bands
-  summary: This table contains salary ranges by clearance level and department.
+  summary: This table contains salary ranges by clearance level and department within
+    an organization.
   contains:
   - salary ranges
   - clearance levels
   - department salary data
   - minimum salaries
   - maximum salaries
-  - salary currency
-  - organizational departments
-  - security clearance salary bands
+  - currency types
+  - organizational pay scales
+  - security clearance pay grades
 - id: training_records
   name: Training Records
   summary: This table records employee training completion details including training
@@ -132,13 +102,13 @@ tables:
   - training completion dates
   - training expiry dates
   - training status tracking
-  - training scores
+  - employee training scores
+  - training course names
   - employee training history
-  - compliance training data
 - id: projects
   name: Projects
-  summary: This table contains detailed information about company projects including
-    their budgets, timelines, departments, and lead employees.
+  summary: This table contains information about various projects including their
+    details, budgets, statuses, and timelines.
   contains:
   - project identifiers
   - project names

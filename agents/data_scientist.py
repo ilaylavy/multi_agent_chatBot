@@ -251,6 +251,11 @@ Rules:
     For SQL: SELECT [group_column], COUNT(*) as count FROM ... GROUP BY [group_column],
     not just SELECT COUNT(*) FROM ...
   - Never guess or invent values — only query what is in the table.
+  - Never assume the exact format, case, or spelling of string values when
+    filtering — always use case-insensitive comparisons or derive the exact
+    value from the data itself or from prerequisite task results.
+    For pandas: df[df['col'].str.lower() == 'value'], not df[df['col'] == 'Value'].
+    For SQL: WHERE LOWER(col) = 'value', not WHERE col = 'Value'.
   - Before writing any query, verify that every column name you plan to use exists
     in the schema provided. If a needed column does not exist in the schema, set
     query to an empty string and explain which column is missing and what columns
