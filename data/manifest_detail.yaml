@@ -25,8 +25,8 @@ pdfs:
   - per diem rates
   - expense reimbursement
   - travel receipts
-  - manager approval
   - travel expense claims
+  - manager approval
 - id: hr_handbook_v3
   filename: hr_handbook_v3.pdf
   type: pdf
@@ -43,16 +43,16 @@ pdfs:
   - 'Chapter 3: Performance Reviews'
   - Rating Scale
   tags:
-  - HR handbook
-  - employee onboarding
-  - leave policy
-  - annual leave
-  - sick leave
-  - parental leave
-  - performance reviews
-  - employee ratings
-  - IT setup
-  - compliance training
+  - HR Handbook
+  - Onboarding
+  - Leave Policy
+  - Performance Reviews
+  - Employee Documents
+  - IT Setup
+  - Annual Leave
+  - Sick Leave
+  - Parental Leave
+  - Employee Ratings
 - id: it_security_policy
   filename: it_security_policy.pdf
   type: pdf
@@ -62,19 +62,15 @@ pdfs:
   - 'Section 2: Data Classification'
   - 'Section 3: Security Incident Reporting'
   tags:
-  - IT security
-  - password policy
-  - data classification
+  - IT security policy
+  - password requirements
   - multi-factor authentication
+  - data classification
   - security incident reporting
   - corporate data protection
   - access control
   - encryption
-<<<<<<< HEAD
-  - incident management
-=======
   - incident response
->>>>>>> 1345b59a9b640e39aa83f0d4b9f4026706b8d926
   - information security
 - id: finance_policy_2024
   filename: finance_policy_2024.pdf
@@ -111,7 +107,7 @@ tables:
     description: Security clearance level associated with the salary range
   - name: department
     type: string
-    description: Department name within the organization
+    description: Department within the organization for the salary range
   - name: salary_min
     type: integer
     description: Minimum salary for the given clearance level and department
@@ -120,7 +116,7 @@ tables:
     description: Maximum salary for the given clearance level and department
   - name: currency
     type: string
-    description: Currency in which the salary is denominated
+    description: Currency in which the salary range is specified
   relationships:
   - clearance_level links to clearance_levels.level
   - department links to departments.name
@@ -151,14 +147,10 @@ tables:
     description: Date when the employee was hired
   - name: manager_id
     type: float
-<<<<<<< HEAD
     description: Employee ID of the manager supervising this employee, nullable if
       no manager
-=======
-    description: Employee ID of the employee's manager, if applicable
->>>>>>> 1345b59a9b640e39aa83f0d4b9f4026706b8d926
   relationships:
-  - manager_id links to employee_id in the same table
+  - manager_id links to employee.employee_id
 - id: training_records
   filename: training_records.csv
   type: csv
@@ -179,13 +171,13 @@ tables:
     description: Date when the training was completed
   - name: expiry_date
     type: string
-    description: Date when the training certification expires
+    description: Date when the training certification or validity expires
   - name: status
     type: string
     description: Current status of the training (e.g., Completed, Expired)
   - name: score
     type: float
-    description: Score or grade achieved in the training
+    description: Score or grade achieved by the employee in the training
   relationships:
   - employee_id links to employees.employee_id
 - id: projects
@@ -199,7 +191,7 @@ tables:
     description: Unique identifier for each project
   - name: project_name
     type: string
-    description: Name or title of the project
+    description: Name of the project
   - name: department
     type: string
     description: Department responsible for the project
@@ -208,13 +200,13 @@ tables:
     description: Identifier of the employee leading the project
   - name: budget
     type: integer
-    description: Allocated budget amount for the project
+    description: Allocated budget for the project
   - name: spent
     type: integer
-    description: Amount of budget spent so far on the project
+    description: Amount of budget spent so far
   - name: status
     type: string
-    description: Current status of the project such as Active or Completed
+    description: Current status of the project (e.g., Active, Completed)
   - name: start_date
     type: string
     description: Date when the project started
