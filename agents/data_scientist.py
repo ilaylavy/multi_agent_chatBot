@@ -38,6 +38,33 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 # ---------------------------------------------------------------------------
+# Safe builtins allowlist for pandas sandbox eval()
+# ---------------------------------------------------------------------------
+# Dangerous builtins (open, exec, eval, compile, __import__, getattr, etc.)
+# are deliberately excluded to prevent arbitrary code execution.
+
+_SAFE_BUILTINS: dict = {
+    # Types & constructors
+    "int": int, "float": float, "str": str, "bool": bool,
+    "list": list, "dict": dict, "set": set, "tuple": tuple,
+    "frozenset": frozenset, "bytes": bytes, "complex": complex,
+    # Aggregation / math
+    "len": len, "sum": sum, "min": min, "max": max,
+    "abs": abs, "round": round, "pow": pow, "divmod": divmod,
+    # Iteration helpers
+    "range": range, "enumerate": enumerate, "zip": zip,
+    "map": map, "filter": filter, "sorted": sorted, "reversed": reversed,
+    # Type checks
+    "isinstance": isinstance, "issubclass": issubclass, "type": type,
+    # Truthiness
+    "any": any, "all": all,
+    # Misc safe
+    "repr": repr, "hash": hash, "callable": callable,
+    "True": True, "False": False, "None": None,
+}
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 
@@ -91,13 +118,14 @@ def _execute_pandas(query: str, file_path: Path) -> tuple[Any, int]:
     Load CSV into a DataFrame and eval the LLM-generated query expression.
 
     The query must reference `df` — e.g. `df[df['col'] == 'val']`.
-    Sandboxed: __builtins__ is empty so import/exec/os are not accessible.
+    Sandboxed: __builtins__ is restricted to a safe allowlist (_SAFE_BUILTINS)
+    so import/exec/open/os are not accessible, but len/sum/min/max etc. work.
 
     Returns (result, row_count).  Scalar results are normalised to
     ``{"result_value": value, "row_count": 1}`` shape by the caller.
     """
     df = pd.read_csv(file_path)
-    safe_globals = {"__builtins__": {}, "pd": pd, "df": df}
+    safe_globals = {"__builtins__": _SAFE_BUILTINS, "pd": pd, "df": df}
     result = eval(query, safe_globals)  # noqa: S307 — intentionally sandboxed
     if isinstance(result, pd.DataFrame):
         row_count = len(result)

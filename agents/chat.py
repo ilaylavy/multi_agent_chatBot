@@ -81,7 +81,7 @@ sub-question from the original. If no rewriting is needed, copy the
 original query unchanged.
 
 Respond with ONLY a JSON object:
-{"intent": "DIRECT"|"CLARIFY"|"PLAN", "rewritten_query": "...", "response": "...or null for PLAN"}
+{"intent": "DIRECT"|"CLARIFY"|"PLAN", "rewritten_query": "...", "response": "your reply (required string for DIRECT/CLARIFY, null for PLAN)"}
 """
 
 _CLASSIFY_USER_TEMPLATE = """\
@@ -323,10 +323,14 @@ async def chat_node(state: AgentState) -> dict:
 
         # DIRECT or CLARIFY — the response is ready immediately
         if response_text is None:
-            raise ValueError(
-                f"LLM returned intent={intent!r} but response field is null.\n"
-                f"Raw output: {response.content}"
+            logger.warning(
+                "LLM returned intent=%r with null response — using fallback. Raw: %s",
+                intent, response.content,
             )
+            if intent == "DIRECT":
+                response_text = "Hello! Ask me anything about your company data."
+            else:  # CLARIFY
+                response_text = "Could you rephrase your question?"
 
         response_text = response_text.strip()
         updated_history = _append_messages(
