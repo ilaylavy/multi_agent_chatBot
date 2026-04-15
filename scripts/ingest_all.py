@@ -20,6 +20,7 @@ import sqlite3
 from pathlib import Path
 
 from ingestion.pdf_ingestor import ingest_pdf
+from ingestion.relationship_detector import detect_relationships
 from ingestion.table_ingestor import ingest_table
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -135,7 +136,20 @@ def run_ingestion() -> None:
     print("=" * 60)
     n_tables = _ingest_tables(table_files)
 
-    print(f"Done. {n_pdfs} PDF(s) and {n_tables} table(s) ingested.")
+    print("=" * 60)
+    print("RELATIONSHIP DETECTION")
+    print("=" * 60)
+    rel_result = detect_relationships()
+    n_cross = len(rel_result["cross_source"])
+    n_per_table = sum(1 for r in rel_result["per_table"].values() if r)
+    print(f"  Cross-source relationships: {n_cross}")
+    print(f"  Tables with relationships:  {n_per_table}")
+    for rel in rel_result["cross_source"]:
+        sources = rel["sources"]
+        print(f"    {sources[0]} <-> {sources[1]} via {rel['shared_key']} (verified: {rel['verified']})")
+    print()
+
+    print(f"Done. {n_pdfs} PDF(s) and {n_tables} table(s) ingested, {n_cross} relationships detected.")
 
 
 if __name__ == "__main__":

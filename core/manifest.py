@@ -76,6 +76,12 @@ def _format_index(raw: dict) -> str:
     """Convert the raw index dict into a Planner-ready string."""
     lines: list[str] = ["AVAILABLE DATA SOURCES", "=" * 22, ""]
 
+    domain_context = raw.get("domain_context", "")
+    if domain_context:
+        lines.append("DOMAIN CONTEXT:")
+        lines.append(f"  {domain_context}")
+        lines.append("")
+
     if raw.get("pdfs"):
         lines.append("PDFs:")
         for entry in raw["pdfs"]:
@@ -85,6 +91,9 @@ def _format_index(raw: dict) -> str:
             contains = entry.get("contains", [])
             if contains:
                 lines.append(f"    contains: {', '.join(contains)}")
+            notes = entry.get("notes", "")
+            if notes:
+                lines.append(f"    notes: {notes}")
             lines.append("")
 
     if raw.get("tables"):
@@ -96,7 +105,25 @@ def _format_index(raw: dict) -> str:
             contains = entry.get("contains", [])
             if contains:
                 lines.append(f"    contains: {', '.join(contains)}")
+            notes = entry.get("notes", "")
+            if notes:
+                lines.append(f"    notes: {notes}")
             lines.append("")
+
+    cross_rels = raw.get("relationships", [])
+    if cross_rels:
+        lines.append("CROSS-SOURCE RELATIONSHIPS:")
+        for rel in cross_rels:
+            sources = rel.get("sources", [])
+            shared_key = rel.get("shared_key", "?")
+            desc = rel.get("description", "")
+            verified = rel.get("verified", False)
+            line = f"  - {sources[0]} <-> {sources[1]} via {shared_key}"
+            if desc:
+                line += f" — {desc}"
+            line += f" (verified: {verified})"
+            lines.append(line)
+        lines.append("")
 
     return "\n".join(lines).rstrip()
 
@@ -113,7 +140,12 @@ def _format_pdf_detail(entry: dict[str, Any]) -> str:
         "Sections:",
     ]
     for section in entry.get("sections", []):
-        lines.append(f"  - {section}")
+        if isinstance(section, dict):
+            heading = section.get("heading", "")
+            summary = section.get("summary", "")
+            lines.append(f"  - {heading}: {summary}" if summary else f"  - {heading}")
+        else:
+            lines.append(f"  - {section}")
 
     tags = entry.get("tags", [])
     if tags:
@@ -150,13 +182,38 @@ def _format_table_detail(entry: dict[str, Any]) -> str:
         if samples:
             col_line += f"  [e.g. {', '.join(str(s) for s in samples)}]"
         lines.append(col_line)
+        # Enriched column stats (only rendered when present)
+        unique_vals = col.get("unique_values")
+        if unique_vals:
+            lines.append(f"    unique_values: {unique_vals}")
+        fmt = col.get("format")
+        if fmt:
+            lines.append(f"    format: {fmt}")
+        col_min = col.get("min")
+        col_max = col.get("max")
+        if col_min is not None or col_max is not None:
+            lines.append(f"    range: [{col_min}, {col_max}]")
+        if col.get("nullable"):
+            lines.append(f"    nullable: true (null_count: {col.get('null_count', 0)})")
 
     relationships = entry.get("relationships", [])
     if relationships:
         lines.append("")
         lines.append("Relationships:")
         for rel in relationships:
-            lines.append(f"  - {rel}")
+            if isinstance(rel, dict):
+                from_col = rel.get("from_column", "?")
+                to_table = rel.get("to_table", "?")
+                to_col = rel.get("to_column", "?")
+                verified = rel.get("verified", False)
+                lines.append(f"  - {from_col} -> {to_table}.{to_col} (verified: {verified})")
+            else:
+                lines.append(f"  - {rel}")
+
+    notes = entry.get("notes", "")
+    if notes:
+        lines.append("")
+        lines.append(f"Notes: {notes}")
 
     return "\n".join(lines)
 

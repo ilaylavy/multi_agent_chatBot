@@ -41,6 +41,14 @@ searched together. Only split into separate tasks when sources use different \
 worker types (e.g. one PDF and one CSV — these cannot share a runtime) or \
 when the information needed is truly independent.
 
+Cross-source relationships: when the manifest lists a CROSS-SOURCE \
+RELATIONSHIPS block, use it to identify which tables share join keys. \
+Prefer combining those tables into a single multi-source task.
+
+Domain context: when the manifest includes a DOMAIN CONTEXT block, treat \
+those rules as ground truth for ordering, ranking, or interpreting \
+categorical values.
+
 Dependencies: if a task requires a value that must first be retrieved from \
 another source, create that retrieval as a separate task and set depends_on. \
 If a task can run independently, set depends_on to null. Apply this per entity.

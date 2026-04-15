@@ -11,87 +11,123 @@ pdfs:
   type: pdf
   pages: 4
   sections:
-  - 'Section 1: Flight Class Entitlements by Clearance Level'
-  - 'Section 2: Booking Rules'
-  - 'Section 3: Hotel Nightly Allowances'
-  - 'Section 4: Per Diem Rates'
-  - 'Section 5: Expense Reimbursement Process'
+  - heading: 'Section 1: Flight Class Entitlements by Clearance Level'
+    summary: Defines flight class entitlements for employees based on their clearance
+      level, specifying allowed classes and conditions for upgrades.
+  - heading: 'Section 2: Booking Rules'
+    summary: Details advance booking requirements and approval conditions for last-minute
+      travel bookings.
+  - heading: 'Section 3: Hotel Nightly Allowances'
+    summary: Specifies maximum reimbursable hotel rates per night by clearance level
+      and accommodation preferences.
+  - heading: 'Section 4: Per Diem Rates'
+    summary: Outlines daily meal and incidental expense allowances by clearance level
+      and conditions for claims exceeding per diem.
+  - heading: 'Section 5: Expense Reimbursement Process'
+    summary: Describes the submission timeline, receipt requirements, approval thresholds,
+      and payment procedures for travel expense reimbursements.
   tags:
   - corporate travel policy
   - flight class entitlements
-  - clearance levels
-  - booking rules
-  - hotel allowances
+  - travel booking rules
+  - hotel reimbursement limits
   - per diem rates
   - expense reimbursement
+  - clearance levels
+  - travel expense approval
   - travel receipts
-  - travel expense claims
-  - manager approval
+  - travel policy 2024
+  notes: ''
 - id: hr_handbook_v3
   filename: hr_handbook_v3.pdf
   type: pdf
   pages: 4
   sections:
-  - 'Chapter 1: Onboarding'
-  - First Week Checklist
-  - Required Documents
-  - IT Setup
-  - 'Chapter 2: Leave Policy'
-  - Annual Leave
-  - Sick Leave
-  - Parental Leave
-  - 'Chapter 3: Performance Reviews'
-  - Rating Scale
+  - heading: 'Chapter 1: Onboarding'
+    summary: Details the onboarding process including required documents, IT setup,
+      and initial training and meetings for new employees.
+  - heading: 'Chapter 2: Leave Policy'
+    summary: Describes leave entitlements based on clearance levels, procedures for
+      requesting leave, and specifics on annual, sick, and parental leave.
+  - heading: 'Chapter 3: Performance Reviews'
+    summary: Explains the biannual performance review process, rating scale, and consequences
+      including performance improvement plans and promotion eligibility.
+  - heading: 'Chapter 4: Code of Conduct'
+    summary: Covers confidentiality obligations, conflict of interest disclosures,
+      and the disciplinary process including steps and consequences for misconduct.
   tags:
-  - HR Handbook
-  - Onboarding
-  - Leave Policy
-  - Performance Reviews
-  - Employee Documents
-  - IT Setup
-  - Annual Leave
-  - Sick Leave
-  - Parental Leave
-  - Employee Ratings
+  - employee onboarding
+  - leave policy
+  - performance reviews
+  - code of conduct
+  - confidentiality
+  - conflict of interest
+  - disciplinary process
+  - IT setup
+  - employee documents
+  - performance improvement plan
+  notes: ''
 - id: it_security_policy
   filename: it_security_policy.pdf
   type: pdf
   pages: 5
   sections:
-  - 'Section 1: Password Policy'
-  - 'Section 2: Data Classification'
-  - 'Section 3: Security Incident Reporting'
+  - heading: 'Section 1: Password Policy'
+    summary: Defines password complexity, length, rotation, history, and mandatory
+      multi-factor authentication requirements for all corporate systems.
+  - heading: 'Section 2: Data Classification'
+    summary: Describes four data categories—Public, Internal, Confidential, and Restricted—with
+      associated access, storage, and transmission controls.
+  - heading: 'Section 3: Security Incident Reporting'
+    summary: Specifies the definition of security incidents, reporting deadlines,
+      reporting methods, immediate response actions, and post-incident review procedures.
+  - heading: 'Section 4: Data Access Matrix'
+    summary: Provides a matrix of data access permissions by clearance level and outlines
+      procedures for requesting and approving access outside the matrix.
+  - heading: 'Section 5: Incident Severity Classification'
+    summary: Classifies security incidents by severity with corresponding response
+      times, escalation paths, and reporting requirements.
   tags:
   - IT security policy
   - password requirements
   - multi-factor authentication
   - data classification
   - security incident reporting
+  - data access control
+  - incident severity levels
   - corporate data protection
-  - access control
-  - encryption
-  - incident response
-  - information security
+  - access clearance levels
+  - security incident response
+  notes: ''
 - id: finance_policy_2024
   filename: finance_policy_2024.pdf
   type: pdf
   pages: 4
   sections:
-  - 'Section 1: Expense Approval Thresholds'
-  - 'Section 2: Project Budget Limits by Department and Clearance Level'
-  - 'Section 3: Reimbursement Procedures'
-  - 'Section 4: Vendor Payment Terms'
+  - heading: 'Section 1: Expense Approval Thresholds'
+    summary: Defines approval requirements, receipt needs, and turnaround times for
+      employee expenses based on amount ranges.
+  - heading: 'Section 2: Project Budget Limits by Department and Clearance Level'
+    summary: Specifies monthly project budget limits per department and clearance
+      level, including rules for budget overruns and approvals.
+  - heading: 'Section 3: Reimbursement Procedures'
+    summary: Details submission timelines, processing times, international expense
+      rules, dispute processes, and cross-references to travel policies for reimbursements.
+  - heading: 'Section 4: Vendor Payment Terms'
+    summary: Outlines payment terms for standard and preferred vendors, small purchase
+      rules, late payment penalties, and vendor dispute escalation procedures.
   tags:
-  - expense approval
-  - budget limits
+  - expense approval thresholds
+  - project budget limits
+  - department clearance levels
   - reimbursement procedures
-  - vendor payment terms
-  - finance policy
-  - employee expenses
-  - project budgets
   - international expenses
-  - expense dispute
-  - payment terms
+  - vendor payment terms
+  - late payment penalties
+  - budget overrun approvals
+  - expense submission deadlines
+  - vendor dispute resolution
+  notes: ''
 tables:
 - id: salary_bands
   filename: salary_bands.sqlite
@@ -101,25 +137,69 @@ tables:
   columns:
   - name: id
     type: integer
+    nullable: false
+    null_count: 0
+    min: 1
+    max: 16
+    format: integer
     description: Unique identifier for each salary range entry
   - name: clearance_level
     type: string
+    nullable: false
+    null_count: 0
+    unique_values:
+    - A
+    - B
+    - C
+    - D
     description: Security clearance level associated with the salary range
   - name: department
     type: string
+    nullable: false
+    null_count: 0
+    unique_values:
+    - Engineering
+    - Finance
+    - HR
+    - Sales
     description: Department within the organization for the salary range
   - name: salary_min
     type: integer
+    nullable: false
+    null_count: 0
+    min: 50000
+    max: 150000
+    format: integer
     description: Minimum salary for the given clearance level and department
   - name: salary_max
     type: integer
+    nullable: false
+    null_count: 0
+    min: 72000
+    max: 220000
+    format: integer
     description: Maximum salary for the given clearance level and department
   - name: currency
     type: string
-    description: Currency in which the salary range is specified
+    nullable: false
+    null_count: 0
+    unique_values:
+    - USD
+    description: Currency in which the salary is denominated
   relationships:
-  - clearance_level links to clearance_levels.level
-  - department links to departments.name
+  - from_column: department
+    to_table: employees
+    to_column: department
+    verified: true
+  - from_column: clearance_level
+    to_table: employees
+    to_column: clearance_level
+    verified: true
+  - from_column: department
+    to_table: projects
+    to_column: department
+    verified: true
+  notes: ''
   table_name: salary_bands
 - id: employees
   filename: employees.csv
@@ -129,28 +209,107 @@ tables:
   columns:
   - name: employee_id
     type: integer
+    nullable: false
+    null_count: 0
+    min: 1
+    max: 10
+    format: integer
     description: Unique identifier for each employee
   - name: full_name
     type: string
+    nullable: false
+    null_count: 0
+    unique_values:
+    - Amir Dayan
+    - Dan Cohen
+    - Hila Stern
+    - Michal Katz
+    - Noa Levi
+    - Oren Shapiro
+    - Roi Peretz
+    - Shira Goldman
+    - Tal Mizrahi
+    - Yael Ben-David
     description: Full name of the employee
   - name: email
     type: string
+    nullable: false
+    null_count: 0
+    unique_values:
+    - amir.d@corp.com
+    - dan.cohen@corp.com
+    - hila.s@corp.com
+    - michal.k@corp.com
+    - noa.levi@corp.com
+    - oren.s@corp.com
+    - roi.p@corp.com
+    - shira.g@corp.com
+    - tal.m@corp.com
+    - yael.bd@corp.com
     description: Corporate email address of the employee
   - name: department
     type: string
+    nullable: false
+    null_count: 0
+    unique_values:
+    - Engineering
+    - Finance
+    - HR
+    - Sales
     description: Department where the employee works
   - name: clearance_level
     type: string
+    nullable: false
+    null_count: 0
+    unique_values:
+    - A
+    - B
+    - C
+    - D
     description: Security clearance level assigned to the employee
   - name: hire_date
     type: string
+    nullable: false
+    null_count: 0
+    unique_values:
+    - '2016-05-03'
+    - '2017-09-15'
+    - '2018-07-01'
+    - '2019-03-12'
+    - '2020-04-18'
+    - '2020-11-05'
+    - '2021-02-20'
+    - '2022-06-30'
+    - '2022-08-22'
+    - '2023-01-09'
+    format: YYYY-MM-DD
     description: Date when the employee was hired
   - name: manager_id
     type: float
+    nullable: true
+    null_count: 2
+    min: 1.0
+    max: 5.0
     description: Employee ID of the manager supervising this employee, nullable if
       no manager
   relationships:
-  - manager_id links to employee.employee_id
+  - from_column: department
+    to_table: salary_bands
+    to_column: department
+    verified: true
+  - from_column: clearance_level
+    to_table: salary_bands
+    to_column: clearance_level
+    verified: true
+  - from_column: employee_id
+    to_table: training_records
+    to_column: employee_id
+    verified: true
+  - from_column: department
+    to_table: projects
+    to_column: department
+    verified: true
+  notes: ''
 - id: training_records
   filename: training_records.csv
   type: csv
@@ -159,27 +318,113 @@ tables:
   columns:
   - name: record_id
     type: integer
+    nullable: false
+    null_count: 0
+    min: 1
+    max: 25
+    format: integer
     description: Unique identifier for each training record
   - name: employee_id
     type: integer
+    nullable: false
+    null_count: 0
+    min: 1
+    max: 10
+    format: integer
     description: Identifier linking the training record to a specific employee
   - name: training_name
     type: string
+    nullable: false
+    null_count: 0
+    unique_values:
+    - Data Privacy
+    - Emergency Procedures
+    - Financial Compliance
+    - Leadership Fundamentals
+    - Security Awareness
     description: Name of the training course completed by the employee
   - name: completion_date
     type: string
+    nullable: true
+    null_count: 2
+    unique_values:
+    - '2023-06-15'
+    - '2023-08-10'
+    - '2023-09-25'
+    - '2023-11-05'
+    - '2024-01-05'
+    - '2024-01-10'
+    - '2024-01-25'
+    - '2024-02-18'
+    - '2024-02-28'
+    - '2024-03-01'
+    - '2024-03-15'
+    - '2024-03-20'
+    - '2024-04-05'
+    - '2024-04-12'
+    - '2024-04-18'
+    - '2024-05-10'
+    - '2024-05-22'
+    - '2024-06-01'
+    - '2024-06-20'
+    - '2024-07-14'
+    - '2024-07-30'
+    - '2024-08-20'
+    - '2024-09-30'
+    format: YYYY-MM-DD
     description: Date when the training was completed
   - name: expiry_date
     type: string
-    description: Date when the training certification or validity expires
+    nullable: true
+    null_count: 2
+    unique_values:
+    - '2024-06-15'
+    - '2024-08-10'
+    - '2024-09-25'
+    - '2024-11-05'
+    - '2025-01-05'
+    - '2025-01-10'
+    - '2025-01-25'
+    - '2025-02-18'
+    - '2025-02-28'
+    - '2025-03-01'
+    - '2025-03-15'
+    - '2025-03-20'
+    - '2025-04-05'
+    - '2025-04-12'
+    - '2025-04-18'
+    - '2025-05-10'
+    - '2025-05-22'
+    - '2025-06-01'
+    - '2025-06-20'
+    - '2025-07-14'
+    - '2025-07-30'
+    - '2025-08-20'
+    - '2025-09-30'
+    format: YYYY-MM-DD
+    description: Date when the training certification expires
   - name: status
     type: string
-    description: Current status of the training (e.g., Completed, Expired)
+    nullable: false
+    null_count: 0
+    unique_values:
+    - Completed
+    - Expired
+    - In Progress
+    description: Current status of the training (Completed, Expired, In Progress)
   - name: score
     type: float
-    description: Score or grade achieved by the employee in the training
+    nullable: true
+    null_count: 2
+    min: 62.0
+    max: 98.0
+    description: Score achieved by the employee in the training
   relationships:
-  - employee_id links to employees.employee_id
+  - from_column: employee_id
+    to_table: employees
+    to_column: employee_id
+    verified: true
+  notes: ''
 - id: projects
   filename: projects.csv
   type: csv
@@ -188,30 +433,125 @@ tables:
   columns:
   - name: project_id
     type: integer
+    nullable: false
+    null_count: 0
+    min: 1
+    max: 12
+    format: integer
     description: Unique identifier for each project
   - name: project_name
     type: string
+    nullable: false
+    null_count: 0
+    unique_values:
+    - API Gateway Upgrade
+    - Annual Audit Automation
+    - Benefits Platform Migration
+    - CRM Integration
+    - Cloud Migration Phase 1
+    - Cloud Migration Phase 2
+    - Compliance Training System
+    - Data Lake Setup
+    - Employee Portal Redesign
+    - Lead Scoring Model
+    - Revenue Dashboard
+    - Sales Forecasting Tool
     description: Name of the project
   - name: department
     type: string
+    nullable: false
+    null_count: 0
+    unique_values:
+    - Engineering
+    - Finance
+    - HR
+    - Sales
     description: Department responsible for the project
   - name: lead_employee_id
     type: integer
-    description: Identifier of the employee leading the project
+    nullable: false
+    null_count: 0
+    min: 1
+    max: 10
+    format: integer
+    description: Identifier for the employee leading the project
   - name: budget
     type: integer
-    description: Allocated budget for the project
+    nullable: false
+    null_count: 0
+    min: 30000
+    max: 150000
+    format: integer
+    description: Allocated budget for the project in currency units
   - name: spent
     type: integer
-    description: Amount of budget spent so far
+    nullable: false
+    null_count: 0
+    min: 12000
+    max: 115000
+    format: integer
+    description: Amount of budget spent so far on the project
   - name: status
     type: string
-    description: Current status of the project (e.g., Active, Completed)
+    nullable: false
+    null_count: 0
+    unique_values:
+    - Active
+    - Completed
+    - On Hold
+    description: Current status of the project such as Active, Completed, or On Hold
   - name: start_date
     type: string
+    nullable: false
+    null_count: 0
+    unique_values:
+    - '2024-01-15'
+    - '2024-01-20'
+    - '2024-02-01'
+    - '2024-02-15'
+    - '2024-03-01'
+    - '2024-03-10'
+    - '2024-04-01'
+    - '2024-06-01'
+    - '2024-07-01'
+    - '2024-08-01'
+    - '2024-09-01'
+    - '2024-10-01'
+    format: YYYY-MM-DD
     description: Date when the project started
   - name: end_date
     type: string
+    nullable: true
+    null_count: 5
+    unique_values:
+    - '2024-05-15'
+    - '2024-06-01'
+    - '2024-06-30'
+    - '2024-07-10'
+    - '2024-08-20'
+    - '2024-08-30'
+    - '2024-09-15'
+    format: YYYY-MM-DD
     description: Date when the project ended or is expected to end
   relationships:
-  - lead_employee_id links to employees.employee_id
+  - from_column: department
+    to_table: salary_bands
+    to_column: department
+    verified: true
+  - from_column: department
+    to_table: employees
+    to_column: department
+    verified: true
+  - from_column: lead_employee_id
+    to_table: employees
+    to_column: employee_id
+    verified: true
+  - from_column: status
+    to_table: training_records
+    to_column: status
+    verified: false
+  - from_column: lead_employee_id
+    to_table: training_records
+    to_column: employee_id
+    verified: true
+  notes: ''

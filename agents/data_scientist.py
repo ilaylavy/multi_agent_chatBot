@@ -256,6 +256,12 @@ Rules:
     value from the data itself or from prerequisite task results.
     For pandas: df[df['col'].str.lower() == 'value'], not df[df['col'] == 'Value'].
     For SQL: WHERE LOWER(col) = 'value', not WHERE col = 'Value'.
+  - When the schema lists unique_values for a column, use those exact \
+    values in filters (correct casing and spelling are guaranteed).
+  - When the schema lists a format hint (e.g. "YYYY-MM-DD"), parse \
+    dates or IDs accordingly.
+  - When relationships list verified join paths, prefer those over \
+    guessing join keys from column names alone.
   - Before writing any query, verify that every column name you plan to use exists
     in the schema provided. If a needed column does not exist in the schema, set
     query to an empty string and explain which column is missing and what columns

@@ -42,7 +42,7 @@ _CATALOG_SYSTEM_PROMPT = (
     "You are reading a document to catalog it for a search system. "
     "Return JSON only: "
     '{ "summary": "one sentence", '
-    '"sections": ["list of main headings"], '
+    '"sections": [{"heading": "section heading", "summary": "one sentence describing what this section covers"}], '
     '"tags": ["5-10 keywords"], '
     '"contains": ["5-10 topic phrases describing what types of information, '
     "rules, policies, or data this document contains — written as search-friendly "
@@ -102,7 +102,7 @@ async def ingest_pdf(file_path: Path, source_id: str) -> dict[str, Any]:
     full_text = "\n\n".join(page.get("text", "") for page in pages)
 
     # ── 2. Catalog via LLM ────────────────────────────────────────
-    preview = full_text[:3000]
+    preview = full_text[:6000]
     llm = get_llm("planner")
     response = await llm.ainvoke([
         {"role": "system", "content": _CATALOG_SYSTEM_PROMPT},
@@ -124,6 +124,7 @@ async def ingest_pdf(file_path: Path, source_id: str) -> dict[str, Any]:
         "name":     name,
         "summary":  summary,
         "contains": contains,
+        "notes":    "",
     }
     detail_entry: dict = {
         "id":       source_id,
@@ -132,6 +133,7 @@ async def ingest_pdf(file_path: Path, source_id: str) -> dict[str, Any]:
         "pages":    page_count,
         "sections": sections,
         "tags":     tags,
+        "notes":    "",
     }
     write_source_to_manifest(source_id, index_entry, detail_entry)
 
