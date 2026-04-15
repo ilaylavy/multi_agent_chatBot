@@ -162,11 +162,134 @@ def _read_sqlite_schema(
     return table_name, columns, sample_rows, row_count
 
 
+def _compute_column_stats(df: pd.DataFrame, columns: list[dict]) -> list[dict]:
+    """
+    Compute enriched column stats from a pandas DataFrame.
+
+    Adds to each column dict (when applicable):
+      unique_values, format, min, max, nullable, null_count
+    """
+    for col in columns:
+        col_name = col["name"]
+        if col_name not in df.columns:
+            continue
+
+        series = df[col_name]
+
+        # Nullable info
+        col["nullable"] = bool(series.isna().any())
+        col["null_count"] = int(series.isna().sum())
+
+        col_type = col["type"]
+
+        if col_type == "string":
+            non_null = series.dropna()
+            n_unique = non_null.nunique()
+            if 0 < n_unique <= 30:
+                col["unique_values"] = sorted(non_null.unique().tolist())
+
+            # Try to detect date format
+            if len(non_null) > 0:
+                try:
+                    parsed = pd.to_datetime(non_null, format="mixed", dayfirst=False)
+                    if parsed.notna().all():
+                        # Check for common formats
+                        sample = str(non_null.iloc[0])
+                        if len(sample) == 10 and sample[4] == "-":
+                            col["format"] = "YYYY-MM-DD"
+                        elif len(sample) == 10 and sample[2] == "/":
+                            col["format"] = "MM/DD/YYYY"
+                        else:
+                            col["format"] = "date"
+                except (ValueError, TypeError):
+                    pass
+
+        elif col_type in ("integer", "float"):
+            non_null = series.dropna()
+            if len(non_null) > 0:
+                col_min = non_null.min()
+                col_max = non_null.max()
+                # Convert numpy scalars to native Python types
+                col["min"] = col_min.item() if hasattr(col_min, "item") else col_min
+                col["max"] = col_max.item() if hasattr(col_max, "item") else col_max
+                if col_type == "integer":
+                    col["format"] = "integer"
+
+    return columns
+
+
+def _compute_sqlite_column_stats(
+    file_path: Path, table_name: str, columns: list[dict]
+) -> list[dict]:
+    """
+    Compute enriched column stats from a SQLite table.
+
+    Adds to each column dict (when applicable):
+      unique_values, format, min, max, nullable, null_count
+    """
+    conn = sqlite3.connect(file_path)
+    try:
+        for col in columns:
+            col_name = col["name"]
+            cur = conn.cursor()
+
+            # Null stats
+            cur.execute(
+                f"SELECT SUM(CASE WHEN [{col_name}] IS NULL THEN 1 ELSE 0 END), "
+                f"COUNT(DISTINCT [{col_name}]) FROM [{table_name}]"
+            )
+            null_count, n_distinct = cur.fetchone()
+            col["nullable"] = bool(null_count and null_count > 0)
+            col["null_count"] = int(null_count or 0)
+
+            col_type = col["type"]
+
+            if col_type == "string":
+                if 0 < n_distinct <= 30:
+                    cur.execute(
+                        f"SELECT DISTINCT [{col_name}] FROM [{table_name}] "
+                        f"WHERE [{col_name}] IS NOT NULL ORDER BY [{col_name}]"
+                    )
+                    col["unique_values"] = [row[0] for row in cur.fetchall()]
+
+                # Try to detect date format from first non-null value
+                cur.execute(
+                    f"SELECT [{col_name}] FROM [{table_name}] "
+                    f"WHERE [{col_name}] IS NOT NULL LIMIT 1"
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    sample = str(row[0])
+                    if len(sample) == 10 and sample[4] == "-":
+                        col["format"] = "YYYY-MM-DD"
+
+            elif col_type in ("integer", "float"):
+                cur.execute(
+                    f"SELECT MIN([{col_name}]), MAX([{col_name}]) FROM [{table_name}] "
+                    f"WHERE [{col_name}] IS NOT NULL"
+                )
+                row = cur.fetchone()
+                if row and row[0] is not None:
+                    col["min"] = row[0]
+                    col["max"] = row[1]
+                    if col_type == "integer":
+                        col["format"] = "integer"
+
+    finally:
+        conn.close()
+
+    return columns
+
+
 def _build_schema_block(columns: list[dict], sample_rows: list[dict]) -> str:
     """Format columns + sample rows into a compact string for the LLM."""
     lines = ["Columns:"]
     for col in columns:
-        lines.append(f"  {col['name']} ({col['type']})")
+        col_line = f"  {col['name']} ({col['type']})"
+        unique_vals = col.get("unique_values")
+        if unique_vals:
+            col_line += f" — unique values: {unique_vals}"
+        lines.append(col_line)
     lines.append("")
     lines.append("Sample rows (JSON):")
     for row in sample_rows:
@@ -218,6 +341,12 @@ async def ingest_table(
         )
         file_type = "sqlite"
 
+    # ── 2b. Compute column stats ────────────────────────────────
+    if suffix == ".csv":
+        columns = _compute_column_stats(df, columns)
+    else:
+        columns = _compute_sqlite_column_stats(file_path, resolved_table, columns)
+
     # ── 3. Catalog via LLM ────────────────────────────────────────
     schema_block = _build_schema_block(columns, sample_rows)
     llm = get_llm("planner")
@@ -250,6 +379,7 @@ async def ingest_table(
         "name":     name,
         "summary":  summary,
         "contains": contains,
+        "notes":    "",
     }
     detail_entry: dict = {
         "id":              source_id,
@@ -258,7 +388,8 @@ async def ingest_table(
         "base_path":       file_path.resolve().parent.relative_to(_PROJECT_ROOT).as_posix() + "/",
         "row_count_approx": row_count,
         "columns":         columns,
-        "relationships":   relationships,
+        "relationships":   [],
+        "notes":           "",
     }
     if resolved_table is not None:
         detail_entry["table_name"] = resolved_table

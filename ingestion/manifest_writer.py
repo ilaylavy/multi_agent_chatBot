@@ -145,6 +145,19 @@ def write_source_to_manifest(
     idx_data = _read_yaml(idx_path)
     idx_data.setdefault("pdfs",   [])
     idx_data.setdefault("tables", [])
+
+    # Preserve human-authored fields from existing entry
+    for existing in idx_data[section]:
+        if existing.get("id") == source_id:
+            if existing.get("notes") and not index_entry.get("notes"):
+                index_entry["notes"] = existing["notes"]
+            break
+
+    # Preserve top-level domain_context
+    if idx_data.get("domain_context") and "domain_context" not in idx_data:
+        pass  # nothing to do
+    # (domain_context lives at top level; we just don't overwrite it)
+
     idx_data[section], _ = _upsert_entry(idx_data[section], source_id, index_entry)
     _write_yaml(idx_path, idx_data)
 
@@ -152,10 +165,80 @@ def write_source_to_manifest(
     det_data = _read_yaml(det_path)
     det_data.setdefault("pdfs",   [])
     det_data.setdefault("tables", [])
+
+    # Preserve human-authored fields from existing entry
+    for existing in det_data[section]:
+        if existing.get("id") == source_id:
+            if existing.get("notes") and not detail_entry.get("notes"):
+                detail_entry["notes"] = existing["notes"]
+            break
+
     det_data[section], _ = _upsert_entry(det_data[section], source_id, detail_entry)
     _write_yaml(det_path, det_data)
 
     invalidate_manifest_cache()
+
+
+def write_cross_source_relationships(
+    relationships: list[dict[str, Any]],
+    *,
+    index_path: Path | None = None,
+) -> None:
+    """
+    Write cross-source relationships to manifest_index.yaml.
+
+    Preserves existing domain_context and all source entries.
+
+    Parameters
+    ----------
+    relationships : List of {sources, shared_key, description, verified} dicts.
+    index_path    : Override path (used in tests).
+    """
+    from core.llm_config import _load_config
+    paths = _load_config()["paths"]
+    idx_path = index_path or (_PROJECT_ROOT / paths["manifest_index"])
+
+    idx_data = _read_yaml(idx_path)
+    idx_data["relationships"] = relationships
+    _write_yaml(idx_path, idx_data)
+    invalidate_manifest_cache()
+
+
+def update_table_relationships(
+    source_id: str,
+    relationships: list[dict[str, Any]],
+    *,
+    detail_path: Path | None = None,
+) -> None:
+    """
+    Update the relationships field for a single table in manifest_detail.yaml.
+
+    Parameters
+    ----------
+    source_id     : The table's id in manifest_detail.yaml.
+    relationships : List of {from_column, to_table, to_column, verified} dicts.
+    detail_path   : Override path (used in tests).
+
+    Raises
+    ------
+    ValueError
+        If source_id is not found in the tables section.
+    """
+    from core.llm_config import _load_config
+    paths = _load_config()["paths"]
+    det_path = detail_path or (_PROJECT_ROOT / paths["manifest_detail"])
+
+    det_data = _read_yaml(det_path)
+    for entry in det_data.get("tables", []):
+        if entry["id"] == source_id:
+            entry["relationships"] = relationships
+            _write_yaml(det_path, det_data)
+            invalidate_manifest_cache()
+            return
+
+    raise ValueError(
+        f"source_id '{source_id}' not found in tables section of manifest_detail.yaml"
+    )
 
 
 def delete_source_from_manifest(

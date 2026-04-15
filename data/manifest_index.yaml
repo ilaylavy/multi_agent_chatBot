@@ -9,63 +9,73 @@
 pdfs:
 - id: travel_policy_2024
   name: Travel Policy 2024
-  summary: This document outlines the 2024 corporate travel policy detailing flight
+  summary: This document outlines the 2024 corporate travel policy including flight
     class entitlements, booking rules, hotel allowances, per diem rates, and expense
     reimbursement procedures based on employee clearance levels.
   contains:
   - flight class entitlements by employee clearance level
   - advance flight booking requirements and exceptions
-  - hotel accommodation nightly reimbursement limits
+  - hotel nightly reimbursement limits by clearance level
   - per diem meal and incidental expense rates
-  - expense claim submission deadlines and receipt requirements
-  - manager and finance department approval processes
-  - travel expense reimbursement policies
-  - travel booking and reimbursement compliance rules
-  - clearance level based travel benefits and restrictions
+  - expense claim submission deadlines and procedures
+  - receipt and documentation requirements for expenses
+  - approval thresholds for travel expenses
+  - reimbursement payment processing timelines
+  - dispute resolution for reimbursement claims
+  - annual adjustment of per diem rates based on CPI
+  notes: ''
 - id: hr_handbook_v3
   name: Hr Handbook V3
-  summary: This HR Handbook v3 outlines the onboarding process, leave policies, and
-    performance review procedures for employees.
+  summary: This HR Handbook v3 outlines the company's policies and procedures on employee
+    onboarding, leave entitlements, performance reviews, and code of conduct.
   contains:
-  - employee onboarding checklist and procedures
-  - required employment documentation for new hires
-  - IT equipment provisioning and security setup
-  - leave entitlements based on clearance levels
-  - annual, sick, and parental leave policies and rules
-  - leave request submission and approval process
-  - performance review schedule and documentation
-  - employee performance rating scale and criteria
+  - onboarding checklist requirements
+  - required employment documents for new hires
+  - IT provisioning and security setup policies
+  - leave entitlements by clearance level
+  - leave request procedures and advance notice rules
+  - annual, sick, and parental leave details
+  - performance review schedule and rating criteria
+  - performance improvement plan guidelines
+  - confidentiality and non-disclosure obligations
+  - conflict of interest disclosure requirements
+  - disciplinary action stages and gross misconduct policies
+  notes: ''
 - id: it_security_policy
   name: It Security Policy
   summary: This IT Security Policy document outlines password requirements, data classification
-    standards, and security incident reporting procedures to ensure corporate information
-    protection and compliance.
+    standards, security incident reporting procedures, data access permissions, and
+    incident severity classifications to ensure corporate information security.
   contains:
   - password complexity and rotation rules
   - multi-factor authentication enforcement
-  - data classification levels and handling procedures
-  - access restrictions based on data classification
-  - encryption requirements for restricted data
-  - security incident definition and reporting protocols
-  - account lockout and password history policies
-  - MFA enrollment timelines and methods
-  - requirements for secure data transmission
-  - incident reporting and escalation procedures
+  - data classification categories and handling rules
+  - security incident definition and reporting procedures
+  - incident reporting deadlines and contact methods
+  - immediate incident response actions
+  - data access permissions by clearance level
+  - temporary elevated access approval process
+  - security incident severity classification and escalation
+  - post-incident review and reporting requirements
+  notes: ''
 - id: finance_policy_2024
   name: Finance Policy 2024
-  summary: This Finance Policy 2024 document outlines employee expense approval thresholds,
-    project budget limits by department and clearance level, reimbursement procedures
-    including international expenses and dispute resolution, and vendor payment terms.
+  summary: This Finance Policy 2024 document outlines expense approval thresholds,
+    project budget limits by department and clearance level, reimbursement procedures,
+    and vendor payment terms.
   contains:
-  - employee expense approval thresholds by amount
-  - required approvers for expenses
-  - receipt and turnaround time requirements
-  - monthly project budget limits by department and clearance level
-  - budget overrun approval requirements
-  - expense reimbursement submission and processing procedures
-  - international expense pre-approval and currency conversion rules
-  - dispute and appeal process for reimbursement claims
-  - vendor invoice payment terms and early payment discount criteria
+  - employee expense approval rules
+  - expense receipt requirements
+  - expense turnaround times
+  - monthly project budget limits by department
+  - clearance level budget restrictions
+  - budget overrun justification and approvals
+  - expense reimbursement submission and processing
+  - international expense pre-approval and currency conversion
+  - vendor invoice payment terms and discounts
+  - late payment penalty calculations
+  - vendor dispute escalation process
+  notes: ''
 tables:
 - id: employees
   name: Employees
@@ -77,12 +87,12 @@ tables:
   - department assignments
   - security clearance levels
   - hire dates
-  - manager relationships
-  - organizational hierarchy
+  - manager-subordinate relationships
   - employee identifiers
+  notes: ''
 - id: salary_bands
   name: Salary Bands
-  summary: This table contains salary ranges by clearance level and department within
+  summary: This table lists salary ranges by clearance level and department within
     an organization.
   contains:
   - salary ranges
@@ -90,32 +100,85 @@ tables:
   - department salary data
   - minimum salaries
   - maximum salaries
-  - currency types
-  - organizational pay scales
-  - security clearance pay grades
+  - organizational departments
+  - security clearance salary bands
+  - USD salary data
+  notes: ''
 - id: training_records
   name: Training Records
   summary: This table records employee training completion details including training
-    names, dates, status, and scores.
+    type, dates, status, and scores.
   contains:
   - employee training records
   - training completion dates
   - training expiry dates
   - training status tracking
-  - employee training scores
-  - training course names
+  - training scores
   - employee training history
+  - compliance training data
+  - training course types
+  notes: ''
 - id: projects
   name: Projects
-  summary: This table contains information about various projects including their
-    details, budgets, statuses, and timelines.
+  summary: This table contains detailed information about various departmental projects
+    including their budgets, timelines, statuses, and lead employees.
   contains:
   - project identifiers
   - project names
   - department assignments
   - project lead employee IDs
   - project budgets
-  - budget expenditures
+  - project expenditures
   - project statuses
   - project start dates
   - project end dates
+  notes: ''
+relationships:
+- sources:
+  - employees
+  - salary_bands
+  shared_key: department
+  description: tables share joinable key (department)
+  verified: true
+- sources:
+  - employees
+  - salary_bands
+  shared_key: clearance_level
+  description: tables share joinable key (clearance_level)
+  verified: true
+- sources:
+  - projects
+  - salary_bands
+  shared_key: department
+  description: tables share joinable key (department)
+  verified: true
+- sources:
+  - employees
+  - training_records
+  shared_key: employee_id
+  description: tables share joinable key (employee_id)
+  verified: true
+- sources:
+  - employees
+  - projects
+  shared_key: department
+  description: tables share joinable key (department)
+  verified: true
+- sources:
+  - employees
+  - projects
+  shared_key: employee_id/lead_employee_id
+  description: tables share joinable key (employee_id/lead_employee_id)
+  verified: true
+- sources:
+  - projects
+  - training_records
+  shared_key: status
+  description: tables share joinable key (status)
+  verified: false
+- sources:
+  - projects
+  - training_records
+  shared_key: employee_id/lead_employee_id
+  description: tables share joinable key (employee_id/lead_employee_id)
+  verified: true
