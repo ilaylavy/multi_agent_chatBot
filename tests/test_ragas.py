@@ -67,9 +67,7 @@ TEST_DATASET: List[Dict[str, Any]] = [
     {
         "question": "How many sick days do employees get per year?",
         "reference_answer": (
-            "All employees receive 10 sick days per year regardless of clearance level. "
-            "A medical certificate is required for absences of 3 or more consecutive days. "
-            "Unused sick leave does not carry over and is not compensated."
+            "All employees receive 10 sick days per year regardless of clearance level."
         ),
         "expected_sources": ["hr_handbook_v3"],
         "difficulty": "simple_lookup",
@@ -87,9 +85,7 @@ TEST_DATASET: List[Dict[str, Any]] = [
     {
         "question": "What are the payment terms for preferred vendors?",
         "reference_answer": (
-            "Preferred vendors have Net 15 payment terms. Preferred vendor status is "
-            "granted to vendors with a minimum 2-year relationship and annual spend "
-            "exceeding $50,000. They receive priority invoice processing."
+            "Preferred vendors have Net 15 payment terms."
         ),
         "expected_sources": ["finance_policy_2024"],
         "difficulty": "simple_lookup",
@@ -107,9 +103,7 @@ TEST_DATASET: List[Dict[str, Any]] = [
     {
         "question": "Which projects are currently on hold?",
         "reference_answer": (
-            "Two projects are currently on hold: Revenue Dashboard (project_id 7, "
-            "Finance department, budget $55,000, spent $12,000) and Data Lake Setup "
-            "(project_id 10, Engineering department, budget $150,000, spent $45,000)."
+            "Two projects are currently on hold: Revenue Dashboard and Data Lake Setup."
         ),
         "expected_sources": ["projects"],
         "difficulty": "filtering",
@@ -117,11 +111,9 @@ TEST_DATASET: List[Dict[str, Any]] = [
     {
         "question": "Which employees have expired training records?",
         "reference_answer": (
-            "Four employees have expired training records: Dan Cohen (employee_id 2, "
-            "Security Awareness expired 2024-11-05), Oren Shapiro (employee_id 4, "
-            "Emergency Procedures expired 2024-08-10), Tal Mizrahi (employee_id 6, "
-            "Data Privacy expired 2024-06-15), and Amir Dayan (employee_id 9, "
-            "Financial Compliance expired 2024-09-25)."
+            "Four employees have expired training records: Dan Cohen "
+            "(Security Awareness), Oren Shapiro (Emergency Procedures), "
+            "Tal Mizrahi (Data Privacy), and Amir Dayan (Financial Compliance)."
         ),
         "expected_sources": ["training_records"],
         "difficulty": "filtering",
@@ -129,10 +121,8 @@ TEST_DATASET: List[Dict[str, Any]] = [
     {
         "question": "What are Hila Stern's training records and scores?",
         "reference_answer": (
-            "Hila Stern (employee_id 10) has three completed training records: "
-            "Security Awareness (score 96, completed 2024-01-05, expires 2025-01-05), "
-            "Leadership Fundamentals (score 98, completed 2024-04-18, expires 2025-04-18), "
-            "and Data Privacy (score 93, completed 2024-07-30, expires 2025-07-30)."
+            "Hila Stern has three training records: Security Awareness (score 96), "
+            "Leadership Fundamentals (score 98), and Data Privacy (score 93)."
         ),
         "expected_sources": ["training_records"],
         "difficulty": "filtering",
@@ -140,10 +130,8 @@ TEST_DATASET: List[Dict[str, Any]] = [
     {
         "question": "Which completed projects went over budget?",
         "reference_answer": (
-            "Three completed projects went over budget: Annual Audit Automation "
-            "(budget $45,000, spent $48,000, over by $3,000), CRM Integration "
-            "(budget $80,000, spent $82,500, over by $2,500), and API Gateway Upgrade "
-            "(budget $70,000, spent $70,500, over by $500)."
+            "Three completed projects went over budget: Annual Audit Automation, "
+            "CRM Integration, and API Gateway Upgrade."
         ),
         "expected_sources": ["projects"],
         "difficulty": "filtering",
@@ -153,9 +141,8 @@ TEST_DATASET: List[Dict[str, Any]] = [
     {
         "question": "What flight class is Dan Cohen entitled to?",
         "reference_answer": (
-            "Dan Cohen has clearance level B. Employees with clearance level B are "
-            "entitled to Business Class on flights exceeding 4 hours, and Economy or "
-            "Economy Plus on shorter flights."
+            "Dan Cohen is entitled to Business Class on flights exceeding 4 hours, "
+            "and Economy or Economy Plus on shorter flights."
         ),
         "expected_sources": ["employees", "travel_policy_2024"],
         "difficulty": "cross_source",
@@ -163,8 +150,7 @@ TEST_DATASET: List[Dict[str, Any]] = [
     {
         "question": "What is Oren Shapiro's hotel nightly allowance?",
         "reference_answer": (
-            "Oren Shapiro has clearance level C. Employees with clearance level C "
-            "are entitled to up to $180 per night for hotel accommodation."
+            "Oren Shapiro's hotel nightly allowance is up to $180 per night."
         ),
         "expected_sources": ["employees", "travel_policy_2024"],
         "difficulty": "cross_source",
@@ -172,10 +158,9 @@ TEST_DATASET: List[Dict[str, Any]] = [
     {
         "question": "What data can Tal Mizrahi access according to the security policy?",
         "reference_answer": (
-            "Tal Mizrahi has clearance level D. According to the data access matrix, "
-            "clearance level D has: Read Only access to Customer Data, Full Access to "
-            "Internal Documents and Public Data, and No Access to Employee Personal "
-            "Data and Financial Records."
+            "According to the data access matrix, Tal Mizrahi has Read Only access "
+            "to Customer Data, Full Access to Internal Documents and Public Data, "
+            "and No Access to Employee Personal Data and Financial Records."
         ),
         "expected_sources": ["employees", "it_security_policy"],
         "difficulty": "cross_source",
@@ -183,8 +168,7 @@ TEST_DATASET: List[Dict[str, Any]] = [
     {
         "question": "What is Noa Levi's monthly project budget limit?",
         "reference_answer": (
-            "Noa Levi is in the Engineering department with clearance level A. "
-            "Her monthly project budget limit is $50,000."
+            "Noa Levi's monthly project budget limit is $50,000."
         ),
         "expected_sources": ["employees", "finance_policy_2024"],
         "difficulty": "cross_source",
@@ -192,9 +176,8 @@ TEST_DATASET: List[Dict[str, Any]] = [
     {
         "question": "Can Shira Goldman access employee personal data?",
         "reference_answer": (
-            "Shira Goldman has clearance level C. According to the data access matrix, "
-            "clearance level C has No Access to Employee Personal Data. Therefore, "
-            "Shira Goldman cannot access employee personal data."
+            "No, Shira Goldman cannot access employee personal data. Her clearance "
+            "level has No Access to Employee Personal Data."
         ),
         "expected_sources": ["employees", "it_security_policy"],
         "difficulty": "cross_source",
@@ -215,10 +198,9 @@ TEST_DATASET: List[Dict[str, Any]] = [
     {
         "question": "Which employees lead projects that are over budget, and what are their clearance levels?",
         "reference_answer": (
-            "Three projects are over budget. Michal Katz (employee_id 5, clearance B) "
-            "leads Annual Audit Automation (budget $45,000, spent $48,000) and CRM "
-            "Integration (budget $80,000, spent $82,500). Roi Peretz (employee_id 7, "
-            "clearance B) leads API Gateway Upgrade (budget $70,000, spent $70,500)."
+            "Michal Katz (clearance B) leads two over-budget projects: Annual Audit "
+            "Automation and CRM Integration. Roi Peretz (clearance B) leads API "
+            "Gateway Upgrade, which is also over budget."
         ),
         "expected_sources": ["projects", "employees"],
         "difficulty": "multi_hop",
@@ -226,8 +208,7 @@ TEST_DATASET: List[Dict[str, Any]] = [
     {
         "question": "Oren Shapiro wants to expense a $1,500 hotel stay - who needs to approve it?",
         "reference_answer": (
-            "A $1,500 expense falls in the $500-$2,000 range, which requires Manager "
-            "approval plus Department Head sign-off. The turnaround time is 5 business days."
+            "A $1,500 expense requires Manager approval plus Department Head sign-off."
         ),
         "expected_sources": ["employees", "finance_policy_2024"],
         "difficulty": "multi_hop",
