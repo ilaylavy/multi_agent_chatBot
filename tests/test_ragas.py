@@ -326,66 +326,441 @@ def _extract_contexts(result: dict) -> List[str]:
 
 
 # ---------------------------------------------------------------------------
-# 3b. Build debug trace for ragas_results.json
+# 3b. Stage builder functions for diagnostic JSON
 # ---------------------------------------------------------------------------
 
-_CHUNK_TEXT_LIMIT = 500
-
-
-def _truncate_chunks(chunks: list) -> list:
-    """Truncate chunk_text fields in a list of chunk dicts."""
-    for chunk in chunks:
-        if isinstance(chunk, dict) and "chunk_text" in chunk:
-            text = chunk["chunk_text"]
-            if len(text) > _CHUNK_TEXT_LIMIT:
-                chunk["chunk_text"] = text[:_CHUNK_TEXT_LIMIT] + "..."
-    return chunks
-
-
-def _build_debug_trace(trace: dict) -> dict:
-    """Build a size-controlled debug trace from the API trace response."""
-    parsed_task_results = {}
-    for tid, tr in trace.get("task_results", {}).items():
-        entry = {
-            "worker_type": tr.get("worker_type"),
-            "success": tr.get("success"),
-            "error": tr.get("error"),
-        }
-        try:
-            output = json.loads(tr["output"]) if isinstance(tr.get("output"), str) else tr.get("output")
-        except (json.JSONDecodeError, TypeError):
-            output = tr.get("output")
-
-        if isinstance(output, dict):
-            if "selected_chunks" in output:
-                _truncate_chunks(output["selected_chunks"])
-            if "chunks" in output:
-                _truncate_chunks(output["chunks"])
-
-        entry["output"] = output
-        parsed_task_results[tid] = entry
-
-    planner_reasoning = trace.get("planner_reasoning")
-    if isinstance(planner_reasoning, str):
-        try:
-            planner_reasoning = json.loads(planner_reasoning)
-        except (json.JSONDecodeError, TypeError):
-            pass
-
+def _build_classification(trace: dict, expected_sources: List[str]) -> dict:
+    """Build the classification stage diagnostic section."""
+    intent = trace.get("chat_intent", "")
+    # All benchmark questions require the full pipeline
+    expected_intent = "PLAN"
+    timings = trace.get("step_timings", {})
     return {
-        "chat_intent": trace.get("chat_intent", ""),
+        "intent": intent,
         "rewritten_query": trace.get("rewritten_query", ""),
-        "query_sent_to_planner": trace.get("query_sent_to_planner"),
-        "planner_reasoning": planner_reasoning,
-        "plan": trace.get("plan"),
-        "task_results": parsed_task_results,
-        "synthesizer_output": trace.get("synthesizer_output", ""),
-        "audit_verdict": trace.get("audit_verdict"),
-        "audit_notes": trace.get("audit_notes"),
+        "expected_intent": expected_intent,
+        "intent_correct": intent == expected_intent,
+        "elapsed_ms": timings.get("classification_ms"),
+    }
+
+
+def _build_planning(trace: dict, expected_sources: List[str]) -> dict | None:
+    """Build the planning stage diagnostic section."""
+    plan = trace.get("plan")
+    if plan is None:
+        return None
+
+    # Parse planner_reasoning from JSON string
+    raw_reasoning = trace.get("planner_reasoning")
+    reasoning = None
+    if isinstance(raw_reasoning, str) and raw_reasoning:
+        try:
+            reasoning = json.loads(raw_reasoning)
+        except (json.JSONDecodeError, TypeError):
+            reasoning = raw_reasoning
+    elif isinstance(raw_reasoning, dict):
+        reasoning = raw_reasoning
+
+    # Compute source coverage
+    planned_sources: set[str] = set()
+    for task in (plan or []):
+        for sid in task.get("source_ids", []):
+            planned_sources.add(sid)
+    expected_set = set(expected_sources)
+    missing = sorted(expected_set - planned_sources)
+    extra = sorted(planned_sources - expected_set)
+
+    timings = trace.get("step_timings", {})
+    return {
+        "reasoning": reasoning,
+        "tasks": plan,
+        "n_tasks": len(plan),
+        "expected_source_coverage": expected_set.issubset(planned_sources),
+        "missing_sources": missing,
+        "extra_sources": extra,
+        "elapsed_ms": timings.get("planning_ms"),
+    }
+
+
+_RESULT_PREVIEW_LIMIT = 300
+
+
+def _format_result_preview(result_value: Any) -> str:
+    """Create a compact string preview of a data_scientist result_value."""
+    if isinstance(result_value, list):
+        if len(result_value) == 0:
+            return "(empty)"
+        if len(result_value) == 1 and isinstance(result_value[0], dict):
+            pairs = ", ".join(f"{k}: {v}" for k, v in result_value[0].items())
+            return pairs[:_RESULT_PREVIEW_LIMIT]
+        preview = json.dumps(result_value, default=str)
+        if len(preview) > _RESULT_PREVIEW_LIMIT:
+            return preview[:_RESULT_PREVIEW_LIMIT] + "..."
+        return preview
+    if isinstance(result_value, dict):
+        preview = json.dumps(result_value, default=str)
+        if len(preview) > _RESULT_PREVIEW_LIMIT:
+            return preview[:_RESULT_PREVIEW_LIMIT] + "..."
+        return preview
+    return str(result_value)[:_RESULT_PREVIEW_LIMIT]
+
+
+def _build_retrieval(trace: dict) -> dict:
+    """Build the retrieval stage diagnostic section with per-task details."""
+    task_results_raw = trace.get("task_results", {})
+    tasks: List[dict] = []
+    n_succeeded = 0
+    n_failed = 0
+    has_empty = False
+
+    for tid, tr in task_results_raw.items():
+        worker_type = tr.get("worker_type", "")
+        success = tr.get("success", False)
+        if success:
+            n_succeeded += 1
+        else:
+            n_failed += 1
+
+        # Parse output
+        raw_output = tr.get("output")
+        if isinstance(raw_output, str):
+            try:
+                output = json.loads(raw_output)
+            except (json.JSONDecodeError, TypeError):
+                output = {}
+        elif isinstance(raw_output, dict):
+            output = raw_output
+        else:
+            output = {}
+
+        entry: Dict[str, Any] = {
+            "task_id": tr.get("task_id", tid),
+            "worker_type": worker_type,
+            "success": success,
+            "error": tr.get("error") or output.get("error"),
+        }
+
+        if worker_type == "data_scientist":
+            entry["error_category"] = output.get("error_category")
+            entry["query_used"] = output.get("query_used")
+            entry["table_name"] = output.get("table_name")
+            entry["tables_loaded"] = output.get("tables_loaded")
+            entry["row_count"] = output.get("row_count")
+            entry["reasoning"] = output.get("reasoning")
+            if success and "result_value" in output:
+                entry["result_preview"] = _format_result_preview(output["result_value"])
+            if success and output.get("row_count", -1) == 0:
+                has_empty = True
+
+        elif worker_type == "librarian":
+            entry["chromadb_query"] = output.get("chromadb_query")
+            entry["chunks_retrieved"] = output.get("chunks_retrieved")
+            entry["top_score"] = output.get("top_score")
+            entry["llm_filter_applied"] = output.get("llm_filter_applied")
+            selected = output.get("selected_chunks", [])
+            entry["selected_count"] = len(selected) if isinstance(selected, list) else 0
+            # Build preview of selected chunks
+            preview = []
+            for chunk in (selected if isinstance(selected, list) else [])[:5]:
+                if isinstance(chunk, dict):
+                    text = chunk.get("chunk_text", "")
+                    preview.append({
+                        "score": chunk.get("relevance_score"),
+                        "source_pdf": chunk.get("source_pdf"),
+                        "page": chunk.get("page_number"),
+                        "text_preview": text[:200] + "..." if len(text) > 200 else text,
+                    })
+            entry["selected_chunks_preview"] = preview
+            if success and entry["selected_count"] == 0:
+                has_empty = True
+
+        tasks.append(entry)
+
+    timings = trace.get("step_timings", {})
+    return {
+        "tasks": tasks,
+        "n_tasks": len(tasks),
+        "n_succeeded": n_succeeded,
+        "n_failed": n_failed,
+        "has_empty_retrieval": has_empty,
+        "elapsed_ms": timings.get("routing_ms"),
+    }
+
+
+def _build_synthesis(trace: dict) -> dict:
+    """Build the synthesis stage diagnostic section."""
+    timings = trace.get("step_timings", {})
+    return {
+        "draft_answer": trace.get("synthesizer_output", ""),
+        "elapsed_ms": timings.get("synthesis_ms"),
+    }
+
+
+def _build_audit(trace: dict) -> dict:
+    """Build the audit stage diagnostic section."""
+    timings = trace.get("step_timings", {})
+    return {
+        "verdict": trace.get("audit_verdict"),
+        "notes": trace.get("audit_notes"),
         "retry_count": trace.get("retry_count", 0),
         "retry_history": trace.get("retry_history", []),
-        "step_timings": trace.get("step_timings", {}),
-        "chat_formatted_response": trace.get("chat_formatted_response"),
+        "elapsed_ms": timings.get("audit_ms"),
+    }
+
+
+def _build_scores(result: dict, thresholds: dict) -> dict:
+    """Build the RAGAS scores analysis section with artifact detection."""
+    scores: Dict[str, float] = {}
+    below: List[str] = []
+    for m in METRICS_LIST:
+        val = result.get(m, 0.0)
+        scores[m] = val
+        if val < thresholds.get(m, 1.0):
+            below.append(m)
+
+    # Artifact detection heuristic
+    artifact = _detect_artifact(result, scores, below)
+
+    return {
+        **scores,
+        "below_threshold": below,
+        "likely_artifact": artifact,
+    }
+
+
+def _detect_artifact(result: dict, scores: dict, below: List[str]) -> dict:
+    """Detect whether low RAGAS scores are measurement artifacts."""
+    if not below:
+        return {"is_artifact": False, "reason": None}
+
+    audit_verdict = result.get("audit_verdict", "")
+    retrieval = result.get("retrieval", {})
+    tasks = retrieval.get("tasks", []) if isinstance(retrieval, dict) else []
+
+    has_ds_context = any(t.get("worker_type") == "data_scientist" and t.get("success")
+                        for t in tasks)
+    reasons = []
+
+    # Faithfulness artifact: data_scientist contexts are structured data, not prose.
+    # RAGAS faithfulness checks if claims in the answer are supported by the context,
+    # but structured "From X: key is val" contexts often fail this check despite being correct.
+    if "faithfulness" in below and has_ds_context and audit_verdict == "PASS":
+        reasons.append(
+            f"faithfulness={scores['faithfulness']:.2f} but audit PASS — "
+            f"data_scientist contexts are structured data that RAGAS cannot "
+            f"properly evaluate for faithfulness"
+        )
+
+    # Context precision artifact: extra context chunks don't hurt the answer.
+    # RAGAS precision penalizes retrieving extra chunks even when the answer is correct.
+    if ("context_precision" in below
+            and scores.get("faithfulness", 0) >= THRESHOLDS.get("faithfulness", 1.0)
+            and audit_verdict == "PASS"):
+        reasons.append(
+            f"context_precision={scores['context_precision']:.2f} but answer is "
+            f"correct and faithful — extra context chunks penalized by RAGAS"
+        )
+
+    # Context recall artifact: data_scientist returns computed values, not passage matches.
+    # RAGAS recall checks if reference claims have supporting passages, but DS results
+    # are computed answers (e.g., "salary_min is 110000") that don't match passage form.
+    if "context_recall" in below and has_ds_context and audit_verdict == "PASS":
+        reasons.append(
+            f"context_recall={scores['context_recall']:.2f} — data_scientist "
+            f"contexts are computed values, not passage matches expected by RAGAS"
+        )
+
+    if reasons:
+        return {"is_artifact": True, "reason": "; ".join(reasons)}
+    return {"is_artifact": False, "reason": None}
+
+
+# ---------------------------------------------------------------------------
+# 3d. Answer comparison via LLM fact extraction
+# ---------------------------------------------------------------------------
+
+def _build_answer_comparisons(results: List[dict]) -> List[dict]:
+    """
+    Use gpt-4o-mini to extract atomic facts from reference and system answers,
+    then compute fact-level diffs for each question. Batched for efficiency.
+    Returns a list of comparison dicts in the same order as results.
+    """
+    from dotenv import load_dotenv
+    from openai import OpenAI
+
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+    client = OpenAI()
+
+    comparisons: List[dict] = []
+    for r in results:
+        if r.get("status") == "error":
+            comparisons.append({
+                "reference_facts": [],
+                "answer_facts": [],
+                "missing_from_answer": [],
+                "extra_in_answer": [],
+                "fact_coverage": 0.0,
+            })
+            continue
+
+        ref = r.get("reference_answer", "")
+        ans = r.get("final_answer", "")
+        if not ref or not ans:
+            comparisons.append({
+                "reference_facts": [],
+                "answer_facts": [],
+                "missing_from_answer": [],
+                "extra_in_answer": [],
+                "fact_coverage": 0.0,
+            })
+            continue
+
+        prompt = (
+            "Extract atomic facts from two answers to the same question. "
+            "An atomic fact is one discrete claim that can be independently verified.\n\n"
+            f"Question: {r['question']}\n\n"
+            f"Reference answer: {ref}\n\n"
+            f"System answer: {ans}\n\n"
+            "Respond in JSON with exactly this structure:\n"
+            "{\n"
+            '  "reference_facts": ["fact1", "fact2", ...],\n'
+            '  "answer_facts": ["fact1", "fact2", ...],\n'
+            '  "missing_from_answer": ["facts in reference but not covered by answer"],\n'
+            '  "extra_in_answer": ["facts in answer but not in reference"]\n'
+            "}\n"
+            "Be precise. Two facts match if they convey the same information even if worded differently."
+        )
+
+        try:
+            resp = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                response_format={"type": "json_object"},
+            )
+            data = json.loads(resp.choices[0].message.content)
+            ref_facts = data.get("reference_facts", [])
+            ans_facts = data.get("answer_facts", [])
+            missing = data.get("missing_from_answer", [])
+            extra = data.get("extra_in_answer", [])
+            coverage = (len(ref_facts) - len(missing)) / len(ref_facts) if ref_facts else 1.0
+            comparisons.append({
+                "reference_facts": ref_facts,
+                "answer_facts": ans_facts,
+                "missing_from_answer": missing,
+                "extra_in_answer": extra,
+                "fact_coverage": round(max(0.0, min(1.0, coverage)), 2),
+            })
+        except Exception as exc:
+            print(f"    WARNING: fact extraction failed for Q{r.get('question_num', '?')}: {exc}")
+            comparisons.append({
+                "reference_facts": [],
+                "answer_facts": [],
+                "missing_from_answer": [],
+                "extra_in_answer": [],
+                "fact_coverage": 0.0,
+                "error": str(exc),
+            })
+
+    return comparisons
+
+
+# ---------------------------------------------------------------------------
+# 3e. Failure classification
+# ---------------------------------------------------------------------------
+
+_FAILURE_CATEGORIES = [
+    "classification", "planning_wrong_sources", "planning_missing_tasks",
+    "retrieval_empty", "retrieval_low_quality", "data_scientist_error",
+    "synthesis_dropped_facts", "audit_exhaustion", "ragas_artifact", "system_error",
+]
+
+
+def _classify_failure(result: dict) -> str | None:
+    """
+    Determine the primary failure category for a question result.
+    Uses a priority waterfall — first match wins.
+    Returns None if no failure detected.
+    """
+    # System error is highest priority
+    if result.get("status") == "error":
+        return "system_error"
+
+    classification = result.get("classification", {})
+    planning = result.get("planning")
+    retrieval = result.get("retrieval", {})
+    audit = result.get("audit", {})
+    scores = result.get("scores", {})
+    comparison = result.get("answer_comparison", {})
+
+    # Classification failure
+    if isinstance(classification, dict) and not classification.get("intent_correct", True):
+        return "classification"
+
+    # Planning failures
+    if isinstance(planning, dict):
+        if planning.get("missing_sources"):
+            return "planning_wrong_sources"
+
+    # Retrieval failures
+    if isinstance(retrieval, dict):
+        if retrieval.get("has_empty_retrieval"):
+            return "retrieval_empty"
+        for task in retrieval.get("tasks", []):
+            if not task.get("success"):
+                if task.get("worker_type") == "data_scientist":
+                    return "data_scientist_error"
+                return "retrieval_empty"
+
+    # Audit exhaustion
+    if isinstance(audit, dict) and audit.get("retry_count", 0) >= 3:
+        return "audit_exhaustion"
+
+    # Check if any RAGAS scores are below threshold
+    below = scores.get("below_threshold", []) if isinstance(scores, dict) else []
+    if not below:
+        return None
+
+    # If artifact detected, classify as artifact
+    artifact = scores.get("likely_artifact", {}) if isinstance(scores, dict) else {}
+    if isinstance(artifact, dict) and artifact.get("is_artifact"):
+        return "ragas_artifact"
+
+    # Synthesis dropped facts — low faithfulness or missing facts in comparison
+    missing_facts = comparison.get("missing_from_answer", []) if isinstance(comparison, dict) else []
+    if missing_facts and ("faithfulness" in below or "context_recall" in below):
+        return "synthesis_dropped_facts"
+
+    # Low quality retrieval — context_recall or context_precision below threshold
+    if "context_recall" in below or "context_precision" in below:
+        return "retrieval_low_quality"
+
+    # Remaining below-threshold cases
+    if below:
+        return "retrieval_low_quality"
+
+    return None
+
+
+def _build_failure_summary(results: List[dict]) -> dict:
+    """Build top-level failure summary from all question results."""
+    by_category: Dict[str, int] = {cat: 0 for cat in _FAILURE_CATEGORIES}
+    by_difficulty: Dict[str, int] = {}
+    total = 0
+
+    for r in results:
+        cat = r.get("failure_category")
+        if cat:
+            total += 1
+            if cat in by_category:
+                by_category[cat] += 1
+            diff = r.get("difficulty", "unknown")
+            by_difficulty[diff] = by_difficulty.get(diff, 0) + 1
+
+    return {
+        "total_failures": total,
+        "by_category": by_category,
+        "by_difficulty": by_difficulty,
     }
 
 
@@ -640,28 +1015,11 @@ async def _run_all_queries(question_nums: set[int] | None = None) -> List[dict]:
             expected_sources = entry["expected_sources"]
             source_match = set(expected_sources).issubset(set(actual_sources))
 
-            # Build compact per-task summary for debugging
-            task_results_raw = trace.get("task_results", {})
-            task_details = []
-            for tid, tr in task_results_raw.items():
-                detail: Dict[str, Any] = {
-                    "task_id": tr.get("task_id", tid),
-                    "worker_type": tr.get("worker_type", ""),
-                    "success": tr.get("success", False),
-                }
-                try:
-                    out = json.loads(tr.get("output", "{}"))
-                except (json.JSONDecodeError, TypeError):
-                    out = {}
-                if not tr.get("success"):
-                    detail["error"] = out.get("error", tr.get("error", ""))
-                    detail["error_category"] = out.get("error_category")
-                if tr.get("worker_type") == "data_scientist":
-                    detail["query_used"] = out.get("query_used")
-                    detail["table_name"] = out.get("table_name")
-                task_details.append(detail)
+            # Build structured diagnostic sections
+            retrieval_section = _build_retrieval(trace)
 
             result = {
+                # Backward-compatible flat fields
                 "question_num": qnum,
                 "question": question,
                 "reference_answer": entry["reference_answer"],
@@ -676,11 +1034,13 @@ async def _run_all_queries(question_nums: set[int] | None = None) -> List[dict]:
                 "audit_verdict": trace.get("audit_verdict", "N/A"),
                 "chat_intent": trace.get("chat_intent", ""),
                 "elapsed_s": round(elapsed, 1),
-                "task_details": task_details,
-                "plan": trace.get("plan", []),
-                "planner_reasoning": trace.get("planner_reasoning"),
-                "has_task_failures": any(not t["success"] for t in task_details),
-                "trace": _build_debug_trace(trace),
+                # New diagnostic sections
+                "classification": _build_classification(trace, expected_sources),
+                "planning": _build_planning(trace, expected_sources),
+                "retrieval": retrieval_section,
+                "synthesis": _build_synthesis(trace),
+                "audit": _build_audit(trace),
+                "step_timings": trace.get("step_timings", {}),
             }
             results.append(result)
 
@@ -707,11 +1067,12 @@ async def _run_all_queries(question_nums: set[int] | None = None) -> List[dict]:
                 "audit_verdict": "ERROR",
                 "chat_intent": "",
                 "elapsed_s": round(elapsed, 1),
-                "task_details": [],
-                "plan": [],
-                "planner_reasoning": None,
-                "has_task_failures": False,
-                "trace": None,
+                "classification": None,
+                "planning": None,
+                "retrieval": None,
+                "synthesis": None,
+                "audit": None,
+                "step_timings": {},
             })
 
     return results
@@ -727,10 +1088,10 @@ def _print_summary(results: List[dict], ragas_scores: dict | None):
     has_multi = n_runs is not None
 
     # ── Per-question table ─────────────────────────────────────────────
-    header = (f"{'#':>3} | {'Question':<50} | {'Tier':<13} | {'Src':<4} | "
-              f"{'Faith':>6} | {'Fact':>6} | {'CtxP':>6} | {'CtxR':>6}")
+    header = (f"{'#':>3} | {'Question':<42} | {'Tier':<13} | {'Src':<4} | "
+              f"{'Faith':>6} | {'CtxP':>6} | {'CtxR':>6} | {'Failure':<22}")
     print(header)
-    print("-" * 120)
+    print("-" * 130)
 
     pq_map: Dict[int, dict] = {}
     if ragas_scores:
@@ -738,21 +1099,21 @@ def _print_summary(results: List[dict], ragas_scores: dict | None):
             pq_map[pq["question_num"]] = pq
 
     for r in results:
-        q_trunc = r["question"][:47] + "..." if len(r["question"]) > 50 else r["question"]
+        q_trunc = r["question"][:39] + "..." if len(r["question"]) > 42 else r["question"]
         src = "OK" if r["source_match"] else "MISS"
         difficulty = r.get("difficulty", "")[:13]
+        fail_cat = r.get("failure_category") or ""
 
         scores = pq_map.get(r["question_num"], {})
         faith = scores.get("faithfulness", 0.0)
-        fact = scores.get("factual_correctness", 0.0)
         ctx_p = scores.get("context_precision", 0.0)
         ctx_r = scores.get("context_recall", 0.0)
 
         status = r.get("status", "success")
         if status == "error":
-            print(f"{r['question_num']:3d} | {q_trunc:<50} | {difficulty:<13} | {src:<4} | {'ERROR':>6} | {'ERROR':>6} | {'ERROR':>6} | {'ERROR':>6}")
+            print(f"{r['question_num']:3d} | {q_trunc:<42} | {difficulty:<13} | {src:<4} | {'ERROR':>6} | {'ERROR':>6} | {'ERROR':>6} | {fail_cat:<22}")
         else:
-            print(f"{r['question_num']:3d} | {q_trunc:<50} | {difficulty:<13} | {src:<4} | {faith:6.3f} | {fact:6.3f} | {ctx_p:6.3f} | {ctx_r:6.3f}")
+            print(f"{r['question_num']:3d} | {q_trunc:<42} | {difficulty:<13} | {src:<4} | {faith:6.3f} | {ctx_p:6.3f} | {ctx_r:6.3f} | {fail_cat:<22}")
 
     # ── Summary stats ─────────────────────────────────────────────────
     source_matches = sum(1 for r in results if r["source_match"])
@@ -805,6 +1166,18 @@ def _print_summary(results: List[dict], ragas_scores: dict | None):
                 avg = sum(vals) / len(vals) if vals else 0.0
                 print(f" | {avg:8.3f}", end="")
             print(f" |  {n:3d}")
+
+    # ── Failure category breakdown ───────────────────────────────────
+    failures = [r for r in results if r.get("failure_category")]
+    if failures:
+        print(f"\nFailure breakdown ({len(failures)} questions):")
+        cat_counts: Dict[str, List[int]] = {}
+        for r in failures:
+            cat = r["failure_category"]
+            cat_counts.setdefault(cat, []).append(r["question_num"])
+        for cat, qnums in sorted(cat_counts.items()):
+            qs = ", ".join(f"Q{n}" for n in qnums)
+            print(f"  {cat:<28} [{qs}]")
 
     # ── Skipped / errors ──────────────────────────────────────────────
     if ragas_scores and ragas_scores.get("skipped"):
@@ -917,6 +1290,20 @@ def main():
                 for m in METRICS_LIST:
                     results[idx][m] = pq.get(m, 0.0)
 
+        # Build scores analysis (needs RAGAS scores merged first)
+        for r in results:
+            r["scores"] = _build_scores(r, THRESHOLDS)
+
+        # Build answer comparisons via LLM
+        print("\nRunning answer comparison (fact extraction)...")
+        comparisons = _build_answer_comparisons(results)
+        for r, comp in zip(results, comparisons):
+            r["answer_comparison"] = comp
+
+        # Classify failures (needs scores + answer_comparison)
+        for r in results:
+            r["failure_category"] = _classify_failure(r)
+
         # Save full output
         full_output = {
             "metadata": {
@@ -932,6 +1319,7 @@ def main():
             "thresholds": THRESHOLDS,
             "overall": ragas_scores["overall"],
             "by_difficulty": _compute_by_difficulty(ragas_scores),
+            "failure_summary": _build_failure_summary(results),
             "results": results,
             "skipped": ragas_scores.get("skipped", []),
         }
