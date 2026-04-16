@@ -38,9 +38,11 @@ PLANNER_STATE: dict[str, Any] = {
     "manifest_context": """
 pdfs:
   - id: travel_policy_2024
+    kind: policy
     summary: Flight class entitlements, hotel limits, and expense caps by clearance level.
 tables:
   - id: employees
+    kind: record
     summary: Master employee list with names, departments, and clearance levels.
 """,
     "retry_notes": "",

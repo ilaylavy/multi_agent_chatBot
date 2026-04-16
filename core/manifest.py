@@ -86,6 +86,7 @@ def _format_index(raw: dict) -> str:
         lines.append("PDFs:")
         for entry in raw["pdfs"]:
             lines.append(f"  - id: {entry['id']}")
+            lines.append(f"    kind: {entry.get('kind', 'policy')}")
             lines.append(f"    name: {entry['name']}")
             lines.append(f"    summary: {entry['summary']}")
             contains = entry.get("contains", [])
@@ -100,6 +101,7 @@ def _format_index(raw: dict) -> str:
         lines.append("Tables:")
         for entry in raw["tables"]:
             lines.append(f"  - id: {entry['id']}")
+            lines.append(f"    kind: {entry.get('kind', 'record')}")
             lines.append(f"    name: {entry['name']}")
             lines.append(f"    summary: {entry['summary']}")
             contains = entry.get("contains", [])
