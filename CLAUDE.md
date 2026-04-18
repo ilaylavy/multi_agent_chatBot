@@ -1,158 +1,152 @@
 # Claude Code — Session Primer
 
-> Read this file and ARCHITECTURE.md before doing anything in this project.
-
-## Current State
-
-Backend complete. All 13 tests passing. Moving to frontend.
+> Read ARCHITECTURE.md before doing anything. It is the source of truth for design.
+> This file covers session rules and operational guidance only — it does not duplicate architecture.
+> be more concise
 
 ---
 
-## What You Are Building
+## Project State
 
-A 7-agent RAG system that answers natural language questions by querying
-PDFs and structured tables, verifying the answer, and returning it to the user.
+A 7-agent RAG system on LangGraph that answers natural-language questions over mixed PDFs and structured tables. Backend is complete. Dev-facing frontend exists for debugging and iteration; production frontend comes later. Current focus is maintenance, tuning, and incremental improvements — not greenfield agent construction.
 
-Full design is in ARCHITECTURE.md. Do not deviate from it.
+If a task looks like it requires building an agent from scratch, confirm with the user before proceeding — the usual work is modifying existing agents, not adding new ones.
 
 ---
 
 ## Non-Negotiable Rules
 
-1. **Read ARCHITECTURE.md first.** Always. Every session.
-2. **One file at a time.** Do not create files not explicitly requested.
-3. **Do not add fields to AgentState** beyond what is specified in ARCHITECTURE.md.
-4. **Agents never instantiate their own LLM.** Always inject via `core/llm_config.py`.
-5. **Agents never access state directly.** Always use the agent's view function.
-6. **Do not implement deferred features.** See the Deferred Features list in ARCHITECTURE.md.
-7. **After each agent: write an isolated test function** the user can run immediately.
-8. **State nodes return only changed fields** — never the full state object.
-9. **Router uses asyncio.gather** for parallel worker dispatch — never sequential loops.
-10. **Librarian uses RetrieverInterface** — never calls ChromaDB directly.
-11. **Test files must never write to `data/pdfs/`, `data/tables/`, or either manifest file directly** — use temp directories or `tests/fixtures/` paths only.
-12. **Never use `print()` in production code** — use `logging.getLogger(__name__)` and the appropriate level (`info`, `warning`, `error`).
-13. **Never import private functions (underscore-prefixed) across module boundaries** — request a public wrapper instead.
-14. **Test files must never write to `data/pdfs/`, `data/tables/`, or manifest files** — use `tmp_path` or `tests/fixtures/` only.
+1. **Read ARCHITECTURE.md at the start of every session.** It defines the full state schema, agent views, graph wiring, manifest system, and data paths. Do not guess — look.
+2. **Do not add fields to `AgentState`** beyond what ARCHITECTURE.md specifies.
+3. **Do not modify ARCHITECTURE.md** without explicit user instruction. If an architectural change seems needed, flag it and ask.
+4. **Agents never instantiate their own LLM.** Always inject via `core.llm_config.get_llm()`.
+5. **Agents never access state directly in prompts.** Always route through the agent's view function in `core/state.py` or the agent module.
+6. **State nodes return only changed fields** — never the full state object.
+7. **Router uses `asyncio.gather`** for parallel worker dispatch — never sequential loops.
+8. **Librarian uses `RetrieverInterface`** — never calls ChromaDB directly.
+9. **Never use `print()` in production code** — use `logging.getLogger(__name__)` with `info`, `warning`, or `error`.
+10. **Never import private (underscore-prefixed) functions across module boundaries.** Request a public wrapper instead.
+11. **Tests never write to `data/`.** See the Data and Fixtures section below.
+12. **One file at a time.** Do not create files that were not explicitly requested.
 
 ---
 
-## Build Order
+## Data and Fixtures
 
-Do not skip steps. Do not reorder.
+This project has four distinct data locations. Confusing them is the single most common source of broken tests and dirty diffs.
 
-```
-1.  core/state.py
-2.  core/llm_config.py
-3.  core/manifest.py
-4.  core/registry.py
-5.  graph.py skeleton (empty nodes)
-6.  agents/planner.py
-7.  agents/librarian.py
-8.  agents/data_scientist.py
-9.  agents/router.py
-10. agents/synthesizer.py
-11. agents/auditor.py
-12. agents/chat.py
-13. graph.py (wire all edges)
-14. api.py
-```
+| Location | Purpose | Committed? | Who writes here |
+|---|---|---|---|
+| `tests/fixtures/pdfs/`, `tests/fixtures/tables/` | Frozen test fixtures | Yes | `scripts/create_test_data.py` only, and only on explicit user instruction |
+| `data/pdfs/`, `data/tables/` | Real user-supplied data | No (gitignored) | User uploads via frontend or CLI, `scripts/ingest_all.py` when re-ingesting |
+| `data/chroma_db/` | ChromaDB vector store | No (gitignored) | Ingestion code only |
+| `data/manifest_index.yaml`, `data/manifest_detail.yaml` | Source manifests | Yes | Ingestion code only, via `ingestion/manifest_writer.py` |
 
----
+### Rules
 
-## Before Writing Any Agent
-
-Check:
-- Does `core/state.py` exist and match ARCHITECTURE.md? If not, stop and fix it first.
-- Does `core/llm_config.py` exist? If not, stop and build it first.
-- Is the agent in the build order above? Build only the next one in sequence.
+- **Tests must read from `tests/fixtures/` or use `tmp_path`.** Never reference `data/` paths in test code.
+- **Tests must never write to `data/pdfs/`, `data/tables/`, `data/chroma_db/`, or either manifest file.** Use `tmp_path` for any test that needs to write.
+- **Fixtures are frozen.** Do not regenerate them. Do not run `scripts/create_test_data.py` without explicit user instruction.
+- **Do not re-ingest without explicit user instruction.** Running `scripts/ingest_all.py` rewrites both committed manifest YAML files via non-deterministic LLM calls, producing a noisy diff that is almost never what the user wants in a PR. Re-ingestion is appropriate only when fixture data itself has changed.
+- **If a fixture file is missing on disk**, do not silently regenerate it. Tell the user. The only exception is `conftest.py`'s session fixture for `employees.csv`, which restores that one file — do not extend this pattern to other fixtures without asking.
+- **The manifests in `data/manifest_*.yaml` are committed but not reviewed line-by-line.** Do not edit them by hand. Changes flow through ingestion code.
 
 ---
 
-## How to Structure Each Agent
+## Working on Agents
 
-Every agent file must follow this pattern:
+### Signature patterns
 
-```python
-# 1. View function — filters state down to only what this agent needs
-def agent_name_view(state: AgentState) -> dict:
-    ...
-
-# 2. Node function — the LangGraph node
-async def agent_name_node(state: AgentState) -> dict:
-    view = agent_name_view(state)
-    llm = get_llm("agent_name")   # from core/llm_config.py
-    # ... agent logic ...
-    return { "only_the_fields_this_agent_changes": value }
-
-# 3. Isolated test function at the bottom
-def test_agent_name():
-    fake_state = { ... }  # minimal state needed for this agent
-    result = asyncio.run(agent_name_node(fake_state))
-    assert "expected_field" in result
-    print("PASS:", result)
-
-if __name__ == "__main__":
-    test_agent_name()
-```
-
----
-
-## Signature Patterns
-
-**LangGraph node** — used for all agents that are graph nodes (planner, router, synthesizer, auditor, chat, librarian, data_scientist). Receives state only:
+LangGraph node (chat, planner, router, synthesizer, auditor):
 ```python
 async def agent_name_node(state: AgentState) -> dict:
 ```
 
-**Registry worker callable** — used for internal worker functions dispatched by the Router via `asyncio.gather`. Receives both state and its specific task:
+Registry worker callable (librarian, data_scientist):
 ```python
 async def worker_name(state: AgentState, task: Task) -> TaskResult:
 ```
 
-Note: LangGraph nodes receive `(state)` only — LangGraph calls them with state. Worker callables receive `(state, task)` — the Router passes the task explicitly via `asyncio.gather`.
+Nodes receive state only — LangGraph calls them. Workers receive `(state, task)` — the Router dispatches them via `asyncio.gather`.
+
+### LLM output parsing
+
+Any agent that expects structured output from the LLM must:
+
+1. Prompt the LLM to return JSON matching a named schema.
+2. Parse with `core.parse.parse_llm_json(response.content)` — not `json.loads` directly. `parse_llm_json` strips optional markdown fences and raises `ValueError` with the raw output included on parse failure.
+3. Never use LangChain's `with_structured_output`.
+
+### View functions
+
+Every agent has a view function that filters `AgentState` down to the fields that agent's prompt is allowed to see. The LLM prompt is built from the view, never from raw state. Do not bypass this to "just include one more field" — if a field truly needs to be visible, update ARCHITECTURE.md first.
+
+### Adding a new worker type
+
+If the user asks for a new worker (e.g., a SQL-only worker, an API-calling worker):
+
+1. Write the worker as an async callable with signature `(state, task) -> TaskResult`.
+2. Register it in `WORKER_REGISTRY` in `core/registry.py`.
+3. Update the Planner's prompt so it knows when to route to the new `worker_type`.
+4. Planner and Router code itself does not change.
 
 ---
 
-## LLM Output Parsing
+## Common Mistakes to Avoid
 
-All agents that need structured output from the LLM must:
-1. Prompt the LLM to respond in JSON matching a specific schema.
-2. Parse the response with `json.loads` inside a `try/except` that raises a `ValueError` including the raw LLM output in the message.
+The following are mistakes that are easy to make in this codebase and expensive to catch late:
 
-Never use `with_structured_output`.
-
-```python
-try:
-    data = json.loads(response.content)
-except (json.JSONDecodeError, KeyError) as exc:
-    raise ValueError(f"Failed to parse LLM output: {exc}\nRaw output: {response.content}") from exc
-```
+- **Writing test files into `data/pdfs/` or `data/tables/`.** Tests must use `tests/fixtures/` or `tmp_path`. See the Data and Fixtures section.
+- **Regenerating fixtures or re-ingesting "to be safe".** This rewrites committed manifests via LLM calls. Do not do this without explicit user instruction.
+- **Adding fields to `AgentState` to pass information between nodes.** The state schema is fixed. If you think you need a new field, there is almost certainly an existing field or view function that already carries that information, or the information belongs inside an existing nested structure (like `TaskResult.output`).
+- **Duplicating logic that already exists in `core/`.** Before writing anything that parses LLM JSON, loads manifests, picks an LLM client, or reranks chunks, check `core/parse.py`, `core/manifest.py`, `core/llm_config.py`, and `core/reranker.py`. If you need a variant, extend the existing module rather than forking it.
+- **Importing underscore-prefixed functions across modules.** If you find yourself writing `from core.llm_config import _load_config` outside `core/`, stop. Either the function should be made public, or there's a higher-level helper you should be using instead. Ask.
+- **Calling ChromaDB directly from an agent.** All retrieval goes through `RetrieverInterface`. The whole point of that abstraction is GraphRAG swap-ability.
+- **Using sequential loops in the Router.** Dispatch must be `asyncio.gather`. A sequential loop is a regression even if it produces identical output.
+- **Editing ARCHITECTURE.md to reflect a local change.** ARCHITECTURE.md is the design spec — it leads, code follows. If a change doesn't match ARCHITECTURE.md, either the change is wrong or ARCHITECTURE.md needs a deliberate update. In either case, ask the user first.
+- **Running the full RAGAS suite to check a small change.** See Operational Guidance below.
+- **Using `print()` anywhere in `agents/`, `core/`, `ingestion/`, or `api.py`.** Use `logger.info/warning/error`.
 
 ---
 
-## Current Status
+## Operational Guidance
 
-Track progress here. Update after each file is completed and tested.
+### Running tests
 
-- [x] core/state.py
-- [x] core/llm_config.py
-- [x] core/manifest.py
-- [x] core/registry.py
-- [x] core/parse.py
-- [x] core/retriever.py
-- [x] graph.py (skeleton)
-- [x] agents/planner.py
-- [x] agents/librarian.py
-- [x] agents/data_scientist.py
-- [x] agents/router.py
-- [x] agents/synthesizer.py
-- [x] agents/auditor.py
-- [x] agents/chat.py
-- [x] graph.py (wired)
-- [x] api.py
-- [x] ingestion/__init__.py
-- [x] ingestion/manifest_writer.py
-- [x] ingestion/pdf_ingestor.py
-- [x] ingestion/table_ingestor.py
-- [x] scripts/create_test_data.py
-- [x] scripts/ingest_pdfs.py
+- **Fast feedback loop:** `pytest tests/test_mock_suite.py -v`. All LLM calls mocked, no credentials needed, runs in seconds.
+- **Per-agent test:** each agent file has a `test_<name>()` function and `if __name__ == "__main__"` block. Run with `python -m agents.<name>`. Use this when iterating on a single agent.
+- **Integration tests:** `pytest tests/test_integration.py -v` makes real OpenAI calls. Skip with `-m 'not integration'`. Only run these when the user asks or when verifying an end-to-end change.
+- **Do not run the RAGAS benchmark** (`python tests/test_ragas.py`) on every change. It requires a running API, takes several minutes, and costs money. Run it only when the user asks or when explicitly tuning retrieval or synthesis quality.
+
+### Ingestion
+
+- Re-ingest only when fixture data itself has changed, or when the user asks. Re-ingestion rewrites both committed manifest YAML files.
+- If the user uploads real data through the frontend, that goes to `data/pdfs/` or `data/tables/` and is gitignored — this is expected and fine.
+- `core/manifest.py` caches manifest reads. After any ingestion, `invalidate_manifest_cache()` is called automatically. If you're debugging a "stale manifest" issue, check that.
+
+### When the audit keeps failing
+
+If a query loops through all 3 retries and exhausts, the issue is usually one of:
+- Planner chose the wrong sources (check `planner_reasoning` in the trace)
+- Retrieval returned empty or low-relevance chunks (check `retrieved_chunks`)
+- Synthesizer dropped a fact the Auditor expected (compare `synthesizer_output` to `draft_answer`)
+- Auditor is over-strict for a legitimately partial answer
+
+Look at the `retry_history` in state — it records every attempt's draft and audit notes. Don't guess; read the trace.
+
+---
+
+## When to Ask Before Acting
+
+Ask the user before:
+
+- Regenerating fixtures (`scripts/create_test_data.py`)
+- Re-ingesting (`scripts/ingest_all.py` or equivalent)
+- Running the RAGAS benchmark
+- Modifying ARCHITECTURE.md
+- Adding a field to `AgentState`
+- Adding a new file that wasn't explicitly requested
+- Changing `config.yaml` in ways that affect behavior (model choices, retry count, chunk sizes)
+- Running integration tests that make real LLM calls when a mock test would do
+
+When in doubt, one quick question beats a noisy diff.

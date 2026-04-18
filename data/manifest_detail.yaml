@@ -13,19 +13,19 @@ pdfs:
   sections:
   - heading: 'Section 1: Flight Class Entitlements by Clearance Level'
     summary: Defines flight class entitlements for employees based on their clearance
-      level, specifying allowed classes and conditions for upgrades.
+      level, specifying allowable classes and conditions for upgrades.
   - heading: 'Section 2: Booking Rules'
-    summary: Details advance booking requirements and approval conditions for last-minute
-      travel bookings.
+    summary: Details advance booking requirements and approval processes for exceptions,
+      including reimbursement limitations for last-minute bookings.
   - heading: 'Section 3: Hotel Nightly Allowances'
     summary: Specifies maximum reimbursable hotel rates per night by clearance level
-      and accommodation preferences.
+      and encourages cost-saving measures like shared accommodations.
   - heading: 'Section 4: Per Diem Rates'
-    summary: Outlines daily meal and incidental expense allowances by clearance level
-      and conditions for claims exceeding per diem.
+    summary: Outlines daily meal and incidental expense allowances by clearance level,
+      receipt requirements, and annual adjustment procedures.
   - heading: 'Section 5: Expense Reimbursement Process'
-    summary: Describes the submission timeline, receipt requirements, approval thresholds,
-      and payment procedures for travel expense reimbursements.
+    summary: Describes submission timelines, receipt and approval requirements, reimbursement
+      processing times, and dispute resolution for travel expenses.
   tags:
   - corporate travel policy
   - flight class entitlements
@@ -36,7 +36,7 @@ pdfs:
   - clearance levels
   - travel expense approval
   - travel receipts
-  - travel policy 2024
+  - travel reimbursement process
   notes: ''
 - id: hr_handbook_v3
   filename: hr_handbook_v3.pdf
@@ -187,13 +187,13 @@ tables:
     - USD
     description: Currency in which the salary is denominated
   relationships:
-  - from_column: department
-    to_table: employees
-    to_column: department
-    verified: true
   - from_column: clearance_level
     to_table: employees
     to_column: clearance_level
+    verified: true
+  - from_column: department
+    to_table: employees
+    to_column: department
     verified: true
   - from_column: department
     to_table: projects
@@ -293,13 +293,13 @@ tables:
     description: Employee ID of the manager supervising this employee, nullable if
       no manager
   relationships:
-  - from_column: department
-    to_table: salary_bands
-    to_column: department
-    verified: true
   - from_column: clearance_level
     to_table: salary_bands
     to_column: clearance_level
+    verified: true
+  - from_column: department
+    to_table: salary_bands
+    to_column: department
     verified: true
   - from_column: employee_id
     to_table: training_records
@@ -331,7 +331,7 @@ tables:
     min: 1
     max: 10
     format: integer
-    description: Identifier linking the training record to a specific employee
+    description: Identifier linking to the employee who completed the training
   - name: training_name
     type: string
     nullable: false
@@ -342,7 +342,7 @@ tables:
     - Financial Compliance
     - Leadership Fundamentals
     - Security Awareness
-    description: Name of the training course completed by the employee
+    description: Name of the training course completed
   - name: completion_date
     type: string
     nullable: true
@@ -474,7 +474,7 @@ tables:
     min: 1
     max: 10
     format: integer
-    description: Identifier for the employee leading the project
+    description: Employee ID of the project lead
   - name: budget
     type: integer
     nullable: false
@@ -482,7 +482,7 @@ tables:
     min: 30000
     max: 150000
     format: integer
-    description: Allocated budget for the project in currency units
+    description: Allocated budget for the project in dollars
   - name: spent
     type: integer
     nullable: false
@@ -490,7 +490,7 @@ tables:
     min: 12000
     max: 115000
     format: integer
-    description: Amount of budget spent so far on the project
+    description: Amount spent so far on the project in dollars
   - name: status
     type: string
     nullable: false
@@ -499,7 +499,7 @@ tables:
     - Active
     - Completed
     - On Hold
-    description: Current status of the project such as Active, Completed, or On Hold
+    description: Current status of the project
   - name: start_date
     type: string
     nullable: false
@@ -518,7 +518,7 @@ tables:
     - '2024-09-01'
     - '2024-10-01'
     format: YYYY-MM-DD
-    description: Date when the project started
+    description: Project start date
   - name: end_date
     type: string
     nullable: true
@@ -532,7 +532,7 @@ tables:
     - '2024-08-30'
     - '2024-09-15'
     format: YYYY-MM-DD
-    description: Date when the project ended or is expected to end
+    description: Project end date or expected completion date
   relationships:
   - from_column: department
     to_table: salary_bands

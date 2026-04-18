@@ -17,12 +17,12 @@ pdfs:
   - advance flight booking requirements and exceptions
   - hotel nightly reimbursement limits by clearance level
   - per diem meal and incidental expense rates
-  - expense claim submission deadlines and procedures
-  - receipt and documentation requirements for expenses
+  - travel expense claim submission deadlines
+  - receipt requirements for expense claims
   - approval thresholds for travel expenses
-  - reimbursement payment processing timelines
-  - dispute resolution for reimbursement claims
-  - annual adjustment of per diem rates based on CPI
+  - reimbursement processing timelines
+  - dispute procedures for travel reimbursements
+  - annual adjustment of per diem rates
   notes: ''
 - id: hr_handbook_v3
   name: Hr Handbook V3
@@ -37,7 +37,7 @@ pdfs:
   - annual, sick, and parental leave details
   - performance review schedule and rating criteria
   - performance improvement plan guidelines
-  - confidentiality and non-disclosure obligations
+  - confidentiality and NDA obligations
   - conflict of interest disclosure requirements
   - disciplinary action stages and gross misconduct policies
   notes: ''
@@ -69,7 +69,7 @@ pdfs:
   - expense turnaround times
   - monthly project budget limits by department
   - clearance level budget restrictions
-  - budget overrun justification and approvals
+  - budget overrun justification and approval
   - expense reimbursement submission and processing
   - international expense pre-approval and currency conversion
   - vendor invoice payment terms and discounts
@@ -87,7 +87,8 @@ tables:
   - department assignments
   - security clearance levels
   - hire dates
-  - manager-subordinate relationships
+  - manager relationships
+  - organizational hierarchy
   - employee identifiers
   notes: ''
 - id: salary_bands
@@ -106,13 +107,13 @@ tables:
   notes: ''
 - id: training_records
   name: Training Records
-  summary: This table records employee training completion details including training
-    type, dates, status, and scores.
+  summary: This table records employee training completions, including training types,
+    dates, status, and scores.
   contains:
   - employee training records
   - training completion dates
-  - training expiry dates
-  - training status tracking
+  - training expiration tracking
+  - training status information
   - training scores
   - employee training history
   - compliance training data
@@ -120,31 +121,31 @@ tables:
   notes: ''
 - id: projects
   name: Projects
-  summary: This table contains detailed information about various departmental projects
-    including their budgets, timelines, statuses, and lead employees.
+  summary: This table contains detailed information about company projects including
+    their budgets, timelines, departments, and lead employees.
   contains:
-  - project identifiers
   - project names
   - department assignments
-  - project lead employee IDs
   - project budgets
   - project expenditures
   - project statuses
   - project start dates
   - project end dates
+  - project leadership
+  - project timelines
   notes: ''
 relationships:
 - sources:
   - employees
   - salary_bands
-  shared_key: department
-  description: tables share joinable key (department)
+  shared_key: clearance_level
+  description: tables share joinable key (clearance_level)
   verified: true
 - sources:
   - employees
   - salary_bands
-  shared_key: clearance_level
-  description: tables share joinable key (clearance_level)
+  shared_key: department
+  description: tables share joinable key (department)
   verified: true
 - sources:
   - projects
