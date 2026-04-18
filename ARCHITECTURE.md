@@ -554,14 +554,39 @@ tables:
 
 ### Manifest Cache
 
-Manifests are cached in memory after first load. `invalidate_manifest_cache()` clears the cache, forcing next reads from disk. Called automatically after ingestion.
+Manifests are cached in memory after first load. `invalidate_manifest_cache()` clears the cache and notifies registered callbacks (including the manifest pre-filter's stale flag). Called automatically after ingestion.
 
 ### Manifest Formatting
 
 `core/manifest.py` provides formatted views:
 - `get_manifest_index()` → formatted index string for Planner prompt
+- `get_manifest_index_raw()` → parsed manifest_index.yaml as a dict
+- `format_manifest_index(raw)` → format a (possibly filtered) dict into Planner-ready text
 - `get_manifest_detail(source_id)` → formatted detail for single source
 - `get_manifest_details(source_ids)` → combined detail blocks for multiple sources
+
+### Manifest Pre-Filter (`core/manifest_prefilter.py`)
+
+RAG-based source pre-selection that narrows the manifest before the Planner sees it.
+
+**Problem:** With 8+ sources, the Planner sometimes confuses semantically similar sources (e.g., a "projects" table mentioning "budgets" vs. a finance policy defining "budget limits"). Passing all sources on every query creates a keyword-matching trap.
+
+**Solution:** Embed each source's metadata into a ChromaDB collection (`source_index`), then retrieve only the top-K most relevant sources per query.
+
+**Ingest-time:** `build_source_index()` concatenates each source's `name + summary + contains` into a single text block, embeds it using ChromaDB's default embedding (all-MiniLM-L6-v2), and stores it in the `source_index` collection. PDFs and tables are treated identically — no type-specific handling at the embedding layer.
+
+**Query-time:** `prefilter_manifest(query)` runs inside `planner_node`, using `rewritten_query` (or `original_query` as fallback) for the embedding search.
+
+Steps:
+1. Retrieve top-K sources (K=5 default, configurable via `retrieval.prefilter_top_k` in config.yaml)
+2. **Relationship expansion** — one-hop walk: if a retrieved source has a declared relationship to a non-retrieved source, pull it in
+3. **Minimum diversity** — ensure at least one `record` and one `policy` source (using the `kind` field) when both kinds exist in the manifest
+4. **Fallback** — if fewer than 3 sources remain after all expansion, return the full manifest
+5. Filter the raw manifest dict and format via `format_manifest_index()`
+
+**Invalidation:** `invalidate_manifest_cache()` triggers a stale flag via callback. The next `prefilter_manifest()` call lazily rebuilds the source_index before querying.
+
+**Trace output:** Each call produces a list of `{source_id, score, expanded_via_relationship}` dicts, exposed in the `/chat` response trace as `prefilter_sources`.
 
 ---
 
@@ -891,6 +916,7 @@ Every `/chat` response includes a `trace` object with:
 - `chat_formatted_response` (boolean)
 - `step_timings` (per-node elapsed_ms: classification_ms, formatting_ms, planning_ms, routing_ms, synthesis_ms, audit_ms)
 - `retry_history`, `planner_reasoning`
+- `prefilter_sources` (list of `{source_id, score, expanded_via_relationship}` — which sources the pre-filter selected and why)
 
 ### Session Management
 
@@ -920,6 +946,7 @@ project/
 │   ├── state.py             # AgentState TypedDict + view functions
 │   ├── llm_config.py        # Per-agent LLM loader (OpenAI/Ollama)
 │   ├── manifest.py          # Manifest loader, cache, formatters
+│   ├── manifest_prefilter.py # RAG pre-filter over manifest source index
 │   ├── registry.py          # Worker Registry (worker_type → callable)
 │   ├── retriever.py         # RetrieverInterface + ChromaRetriever
 │   ├── reranker.py          # RerankerInterface + FlashRanker + PassthroughRanker

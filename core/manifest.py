@@ -31,16 +31,24 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # ---------------------------------------------------------------------------
 
 _cache: dict[str, Any] = {}
+_invalidation_callbacks: list = []
+
+
+def register_invalidation_callback(cb) -> None:
+    """Register a callable to be invoked whenever the manifest cache is cleared."""
+    _invalidation_callbacks.append(cb)
 
 
 def invalidate_manifest_cache() -> None:
     """
-    Clear the manifest cache.
+    Clear the manifest cache and notify registered callbacks.
 
     The next call to get_manifest_index() or get_manifest_detail() will
     re-read the YAML files from disk. No-op if the cache is already empty.
     """
     _cache.clear()
+    for cb in _invalidation_callbacks:
+        cb()
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +94,7 @@ def _format_index(raw: dict) -> str:
         lines.append("PDFs:")
         for entry in raw["pdfs"]:
             lines.append(f"  - id: {entry['id']}")
+            lines.append(f"    kind: {entry.get('kind', 'policy')}")
             lines.append(f"    name: {entry['name']}")
             lines.append(f"    summary: {entry['summary']}")
             contains = entry.get("contains", [])
@@ -100,6 +109,7 @@ def _format_index(raw: dict) -> str:
         lines.append("Tables:")
         for entry in raw["tables"]:
             lines.append(f"  - id: {entry['id']}")
+            lines.append(f"    kind: {entry.get('kind', 'record')}")
             lines.append(f"    name: {entry['name']}")
             lines.append(f"    summary: {entry['summary']}")
             contains = entry.get("contains", [])
@@ -241,6 +251,11 @@ def get_manifest_index() -> str:
     Call invalidate_manifest_cache() to force a re-read.
     """
     return _format_index(_load_index_raw())
+
+
+def format_manifest_index(raw: dict) -> str:
+    """Format a (possibly filtered) manifest index dict into a Planner-ready string."""
+    return _format_index(raw)
 
 
 def get_manifest_detail(source_id: str) -> str:
