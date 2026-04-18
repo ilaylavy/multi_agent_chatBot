@@ -15,6 +15,7 @@ import json
 import logging
 
 from core.llm_config import get_llm
+from core.manifest_prefilter import prefilter_manifest, _prefilter_traces
 from core.parse import parse_llm_json
 from core.state import AgentState, Task
 
@@ -127,12 +128,17 @@ def planner_view(state: AgentState) -> dict:
 async def planner_node(state: AgentState) -> dict:
     view = planner_view(state)
 
+    # Pre-filter manifest using rewritten_query (or original_query fallback)
+    query = view["original_query"]  # planner_view already resolves rewritten
+    filtered_manifest, prefilter_trace = prefilter_manifest(query)
+    _prefilter_traces[state.get("session_id", "")] = prefilter_trace
+
     retry_section = ""
     if "retry_notes" in view:
         retry_section = _RETRY_NOTE_SECTION.format(retry_notes=view["retry_notes"])
 
     user_message = _USER_TEMPLATE.format(
-        manifest_context=view["manifest_context"],
+        manifest_context=filtered_manifest,
         original_query=view["original_query"],
         retry_section=retry_section,
     )
