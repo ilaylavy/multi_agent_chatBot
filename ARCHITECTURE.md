@@ -158,7 +158,7 @@ Every agent sees only its designated fields. The LLM prompt is built from the vi
 
 | Agent | Fields in View |
 |-------|---------------|
-| Chat | original_query, conversation_history, final_answer, final_sources, chat_intent |
+| Chat | original_query, conversation_history, final_answer, final_sources, chat_intent, rewritten_query |
 | Planner | original_query (or rewritten_query if set), manifest_context, retry_notes (on retry only) |
 | Router | plan |
 | Librarian | task, manifest_details (caller-injected) |

@@ -9,17 +9,20 @@ Handles four distinct execution paths:
                       Returns the failure message from config.yaml. No LLM call.
 
   CLASSIFY (initial entry) — final_answer is empty and retry_count < max_attempts.
-                      Calls LLM once to classify intent and generate a response.
-                      Schema: { intent, rewritten_query, response }
+                      Calls LLM to classify intent. Schema: { intent, response }.
                       DIRECT  → response is the answer; write to final_answer + history.
                       CLARIFY → response is a clarifying question; write to final_answer + history.
-                      PLAN    → write chat_intent + rewritten_query; graph routes to Planner.
+                      PLAN    → runs a dedicated rewrite LLM call to produce a
+                                self-contained query, then routes to Planner.
 
   FORMAT AND DELIVER — final_answer is populated (set by Auditor on PASS).
-                      Calls LLM to format the answer with source references.
-                      Appends user query + formatted answer to history.
+                      Calls LLM to format the answer. Runs a factual-preservation
+                      safety check: if the formatter introduced negation that the
+                      audited draft did not contain, the formatted text is
+                      discarded and the audited draft is delivered verbatim.
 
-View    : original_query, conversation_history, final_answer, final_sources, chat_intent
+View    : original_query, conversation_history, final_answer, final_sources,
+          chat_intent, rewritten_query
 Returns : { conversation_history, chat_intent, rewritten_query }          on PLAN
           { conversation_history, chat_intent, final_answer }              on DIRECT / CLARIFY
           { conversation_history, final_answer }                           on FORMAT or EXHAUSTION
@@ -49,6 +52,11 @@ _MAX_ATTEMPTS:    int = _retry_cfg["max_attempts"]
 _chat_cfg = _load_config().get("chat", {})
 MAX_CLASSIFICATION_HISTORY: int = _chat_cfg.get("max_classification_history", 6)
 
+# The rewrite LLM gets a larger window — it must reconstruct intent across
+# a full clarification cycle (original question → clarification → user detail →
+# confirmation). Double the classify window by default.
+MAX_REWRITE_HISTORY: int = _chat_cfg.get("max_rewrite_history", 12)
+
 
 # ---------------------------------------------------------------------------
 # Prompt templates — classification
@@ -74,14 +82,15 @@ provided their name, or asks to compare two things without specifying what
 they are). Ask exactly one short question. Never clarify about data sources,
 data availability, or how something might be defined in the system.
 
-Query rewriting (PLAN only):
-If conversation history exists and the current query references prior
-context, rewrite it as a fully self-contained question. Preserve every
-sub-question from the original. If no rewriting is needed, copy the
-original query unchanged.
+Post-clarification handling:
+If the previous assistant message was a clarification question (it ended with
+"?" and asked the user to disambiguate), treat the current user message as an
+action trigger — not a new clarification need. Confirmations ("yes", "yeah",
+"correct", "right"), corrections ("no, I meant X"), and added detail all
+classify as PLAN. Never return CLARIFY back-to-back.
 
 Respond with ONLY a JSON object:
-{"intent": "DIRECT"|"CLARIFY"|"PLAN", "rewritten_query": "...", "response": "your reply (required string for DIRECT/CLARIFY, null for PLAN)"}
+{"intent": "DIRECT"|"CLARIFY"|"PLAN", "response": "your reply (required string for DIRECT/CLARIFY, null for PLAN)"}
 """
 
 _CLASSIFY_USER_TEMPLATE = """\
@@ -91,11 +100,55 @@ _CLASSIFY_USER_TEMPLATE = """\
 
 
 # ---------------------------------------------------------------------------
+# Prompt templates — dedicated rewrite (PLAN path only)
+# ---------------------------------------------------------------------------
+
+_REWRITE_SYSTEM_PROMPT = """\
+You are a query rewriter. Your only job is to produce a single self-contained
+question that a planner with zero conversation context can act on.
+
+You must correctly handle:
+  - Follow-ups ("and X?", "what about Y?") → carry forward the topic from the
+    last concrete question the user asked.
+  - Pronoun resolution ("his/her/their/they/them/it") → resolve to the most
+    recently named entity.
+  - Post-clarification confirmations — if the previous assistant turn was a
+    clarification question and the user replied with "yes"/"yeah"/"correct",
+    reconstruct the full intent using the clarified entity, NOT the
+    clarification question itself. If they replied with a correction
+    ("no, I meant X"), use the corrected entity.
+  - Multi-part questions → preserve every sub-question.
+  - Corrections of earlier queries → use the corrected form.
+
+If the user's current message is already fully self-contained, copy it unchanged.
+Never invent facts not present in the conversation.
+
+Respond with ONLY a JSON object:
+{"rewritten_query": "..."}
+"""
+
+_REWRITE_USER_TEMPLATE = """\
+{history_block}CURRENT USER MESSAGE:
+{original_query}
+"""
+
+
+# ---------------------------------------------------------------------------
 # Prompt templates — format and deliver
 # ---------------------------------------------------------------------------
 
 _DELIVER_SYSTEM_PROMPT = """\
-Rewrite this answer as a direct, concise response.
+You are a copyeditor, not an author. Every name, number, category, date, and
+conclusion in the VERIFIED ANSWER must survive in your output. You may change
+tone, length, and phrasing — never facts. If the verified answer states a
+positive finding (a name, a value, a rule), your output must state that same
+positive finding. Never invert polarity: do not output "not found", "does not
+exist", "no record", "no such X", or any negation unless the verified answer
+itself contains that same negation.
+
+Rewrite the VERIFIED ANSWER as a direct, concise response to the user's
+question. Use the RECENT CONVERSATION block only to understand what the user
+was asking about — never to add facts the verified answer did not contain.
 
 Rules:
   - Lead with the key fact.
@@ -121,8 +174,8 @@ Rules:
 """
 
 _DELIVER_USER_TEMPLATE = """\
-USER QUESTION:
-{original_query}
+{history_block}USER QUESTION (resolved from conversation context):
+{resolved_query}
 
 VERIFIED ANSWER (rewrite for the user):
 {final_answer}
@@ -137,6 +190,10 @@ def chat_view(state: AgentState) -> dict:
     """
     Returns only the fields the Chat Agent's LLM prompt may see.
     Never exposes plan, task_results, audit_result, retry_count, or retry_notes.
+
+    rewritten_query is included so the formatter can use the self-contained
+    query (set on the PLAN path) when composing the deliver prompt — without it
+    the formatter sees only the raw user fragment and may misinterpret intent.
     """
     return {
         "original_query":       state["original_query"],
@@ -144,6 +201,7 @@ def chat_view(state: AgentState) -> dict:
         "final_answer":         state["final_answer"],
         "final_sources":        state["final_sources"],
         "chat_intent":          state.get("chat_intent", ""),
+        "rewritten_query":      state.get("rewritten_query", ""),
     }
 
 
@@ -163,9 +221,14 @@ def _format_sources_block(final_sources: list) -> str:
     return "\n".join(lines)
 
 
-def _format_history_block(history: list) -> str:
-    """Return the last MAX_CLASSIFICATION_HISTORY messages formatted for the classify prompt."""
-    recent = history[-MAX_CLASSIFICATION_HISTORY:] if len(history) > MAX_CLASSIFICATION_HISTORY else history
+def _format_history_block(history: list, max_messages: int = MAX_CLASSIFICATION_HISTORY) -> str:
+    """Return the last `max_messages` messages formatted for a chat LLM prompt.
+
+    Default limit matches the classify call. Pass a larger value (e.g.
+    MAX_REWRITE_HISTORY) for the rewrite call, which needs a broader window
+    to reconstruct post-clarification intent.
+    """
+    recent = history[-max_messages:] if len(history) > max_messages else history
     if not recent:
         return ""
     lines = ["CONVERSATION HISTORY:"]
@@ -174,6 +237,76 @@ def _format_history_block(history: list) -> str:
         lines.append(f"  {role}: {msg['content']}")
     lines.append("")  # blank line separator
     return "\n".join(lines) + "\n"
+
+
+def _format_recent_for_deliver(history: list, last_n: int = 2) -> str:
+    """Return the last `last_n` messages formatted for the deliver prompt.
+
+    Smaller window than classify/rewrite — the formatter only needs enough
+    conversational context to interpret terse user fragments, not full recall.
+    """
+    recent = history[-last_n:] if len(history) > last_n else history
+    if not recent:
+        return ""
+    lines = ["RECENT CONVERSATION:"]
+    for msg in recent:
+        role = "User" if msg["role"] == "user" else "Assistant"
+        lines.append(f"  {role}: {msg['content']}")
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+async def _rewrite_query(history: list, original_query: str, llm) -> str:
+    """Produce a self-contained query for the Planner.
+
+    Fires on the PLAN path only. Splitting the rewrite out from classify lets
+    each call have a focused prompt and a broader history window, which
+    matters most for post-clarification confirmations where the classify call
+    would otherwise echo the clarification question itself.
+
+    Falls back to `original_query` on any parse failure so the Planner always
+    has *something* to act on.
+    """
+    history_block = _format_history_block(history, max_messages=MAX_REWRITE_HISTORY)
+    user_message  = _REWRITE_USER_TEMPLATE.format(
+        history_block=history_block,
+        original_query=original_query,
+    )
+    try:
+        response = await llm.ainvoke([
+            {"role": "system", "content": _REWRITE_SYSTEM_PROMPT},
+            {"role": "user",   "content": user_message},
+        ])
+        data = parse_llm_json(response.content)
+        rewritten = (data.get("rewritten_query") or "").strip()
+        return rewritten or original_query
+    except (ValueError, KeyError) as exc:
+        logger.warning(
+            "Rewrite call failed, falling back to original_query. Error: %s", exc
+        )
+        return original_query
+
+
+# Negation phrases the formatter must never introduce on its own.
+# Matched case-insensitively against both the audited draft and the
+# formatted output — if the formatter added one that wasn't in the draft,
+# we reject the formatted version as an unsafe polarity inversion.
+_NEGATION_PATTERNS: tuple[str, ...] = (
+    "not found",
+    "no employee",
+    "no record",
+    "does not exist",
+    "no such",
+    "could not find",
+    "no results",
+    "isn't in",
+    "is not in",
+)
+
+
+def _contains_negation(text: str) -> bool:
+    lower = text.lower()
+    return any(p in lower for p in _NEGATION_PATTERNS)
 
 
 def _append_messages(
@@ -294,23 +427,28 @@ async def chat_node(state: AgentState) -> dict:
 
         data = parse_llm_json(response.content)
         try:
-            intent          = data["intent"]
-            rewritten_query = data.get("rewritten_query") or view["original_query"]
-            response_text   = data.get("response")
-            logger.debug(
-                "[%s] Chat classify — intent=%s rewritten_query=%s query_to_planner=%s",
-                state.get("session_id", "?"),
-                intent,
-                rewritten_query,
-                rewritten_query if intent == "PLAN" else "(not routed to planner)",
-            )
+            intent        = data["intent"]
+            response_text = data.get("response")
         except KeyError as exc:
             raise ValueError(
                 f"Missing key in classify LLM output: {exc}\nRaw output: {response.content}"
             ) from exc
 
-        # PLAN — pass control to the Planner; no answer yet
+        # PLAN — run a dedicated rewrite call, then hand off to the Planner.
+        # The rewrite is split out from classify so each prompt stays focused
+        # and the rewrite gets a larger history window (critical for
+        # post-clarification confirmations like "yes").
         if intent == "PLAN":
+            rewritten_query = await _rewrite_query(
+                view["conversation_history"],
+                view["original_query"],
+                llm,
+            )
+            logger.debug(
+                "[%s] Chat classify — intent=PLAN rewritten_query=%s",
+                state.get("session_id", "?"),
+                rewritten_query,
+            )
             updated_history = _append_messages(
                 view["conversation_history"],
                 view["original_query"],
@@ -320,6 +458,12 @@ async def chat_node(state: AgentState) -> dict:
                 "chat_intent":          "PLAN",
                 "rewritten_query":      rewritten_query,
             }
+
+        logger.debug(
+            "[%s] Chat classify — intent=%s (no rewrite needed)",
+            state.get("session_id", "?"),
+            intent,
+        )
 
         # DIRECT or CLARIFY — the response is ready immediately
         if response_text is None:
@@ -365,8 +509,16 @@ async def chat_node(state: AgentState) -> dict:
             "final_answer":         _FAILURE_MESSAGE,
         }
 
+    # Feed the formatter the self-contained query (rewritten_query) plus a small
+    # window of recent history. Without this, terse follow-ups like "and noa
+    # levi?" reach the formatter as raw fragments, and the LLM may invert
+    # polarity trying to reconcile the fragment with a concrete answer.
+    resolved_query = view["rewritten_query"] or view["original_query"]
+    history_block  = _format_recent_for_deliver(view["conversation_history"], last_n=2)
+
     user_message = _DELIVER_USER_TEMPLATE.format(
-        original_query=view["original_query"],
+        history_block=history_block,
+        resolved_query=resolved_query,
         final_answer=final_answer,
     )
 
@@ -377,6 +529,20 @@ async def chat_node(state: AgentState) -> dict:
     ])
 
     formatted_answer = response.content.strip()
+
+    # Factual-preservation safety check. The audited draft (final_answer) was
+    # approved by the Auditor, so falling back to it is always safe. We only
+    # override when the formatter introduced a negation the draft did not have.
+    if _contains_negation(formatted_answer) and not _contains_negation(final_answer):
+        logger.warning(
+            "[%s] Formatter introduced negation absent from audited draft — "
+            "rejecting formatted output and delivering the audited draft verbatim. "
+            "Draft: %r Formatted: %r",
+            state.get("session_id", "?"),
+            final_answer,
+            formatted_answer,
+        )
+        formatted_answer = final_answer
 
     updated_history = _append_messages(
         view["conversation_history"],
@@ -426,23 +592,25 @@ def test_chat():
     # ── Test 1: chat_view exposes only the permitted fields ───────
     view = chat_view(CHAT_AGENT_STATE)
     assert set(view.keys()) == {
-        "original_query", "conversation_history", "final_answer", "final_sources", "chat_intent"
+        "original_query", "conversation_history", "final_answer", "final_sources",
+        "chat_intent", "rewritten_query",
     }
     assert "plan"             not in view
     assert "task_results"     not in view
     assert "audit_result"     not in view
     assert "retry_count"      not in view
     assert "retry_notes"      not in view
-    assert "rewritten_query"  not in view
     assert "synthesizer_output" not in view
+    # rewritten_query is intentionally exposed so the formatter can use the
+    # self-contained query; all other internal pipeline fields remain hidden.
+    assert view["rewritten_query"] == CHAT_AGENT_STATE.get("rewritten_query", "")
     print("PASS: chat_view returns correct fields and excludes all forbidden ones")
 
     # ── Test 2: DIRECT intent — LLM responds immediately, final_answer set ──
     direct_response = "Hello! I'm a multi-agent RAG assistant. Ask me anything about your company data."
     direct_json = json.dumps({
-        "intent":          "DIRECT",
-        "rewritten_query": "Hi there",
-        "response":        direct_response,
+        "intent":   "DIRECT",
+        "response": direct_response,
     })
     mock_resp_direct = MagicMock()
     mock_resp_direct.content = direct_json
@@ -461,14 +629,16 @@ def test_chat():
     assert history_direct[-1]["role"]    == "assistant"
     assert history_direct[-1]["content"] == direct_response
     assert "rewritten_query" not in result_direct, "DIRECT must not write rewritten_query"
+    # DIRECT must only invoke the classify LLM — no rewrite call
+    assert mock_llm_direct.ainvoke.call_count == 1, \
+        f"DIRECT must make exactly one LLM call, got {mock_llm_direct.ainvoke.call_count}"
     print("PASS: DIRECT intent calls LLM, sets final_answer, appends both turns to history")
 
     # ── Test 3: CLARIFY intent — clarifying question returned as final_answer ──
     clarify_response = "Could you clarify — which Noa are you referring to?"
     clarify_json = json.dumps({
-        "intent":          "CLARIFY",
-        "rewritten_query": "Can Noa fly Business Class?",
-        "response":        clarify_response,
+        "intent":   "CLARIFY",
+        "response": clarify_response,
     })
     mock_resp_clarify = MagicMock()
     mock_resp_clarify.content = clarify_json
@@ -484,19 +654,21 @@ def test_chat():
     history_clarify = result_clarify["conversation_history"]
     assert history_clarify[-1]["role"]    == "assistant"
     assert history_clarify[-1]["content"] == clarify_response
+    assert mock_llm_clarify.ainvoke.call_count == 1, \
+        f"CLARIFY must make exactly one LLM call, got {mock_llm_clarify.ainvoke.call_count}"
     print("PASS: CLARIFY intent calls LLM, sets final_answer to clarifying question")
 
-    # ── Test 4: PLAN intent — rewritten_query written, final_answer absent ──
+    # ── Test 4: PLAN intent — classify + dedicated rewrite LLM call ──
+    # PLAN now requires two sequential LLM calls: first classify returns the
+    # intent, then a dedicated rewrite call produces the self-contained query.
     rewritten = "What is Dan Cohen's flight class entitlement?"
-    plan_json = json.dumps({
-        "intent":          "PLAN",
-        "rewritten_query": rewritten,
-        "response":        None,
-    })
-    mock_resp_plan = MagicMock()
-    mock_resp_plan.content = plan_json
+    classify_plan_json = json.dumps({"intent": "PLAN", "response": None})
+    rewrite_plan_json  = json.dumps({"rewritten_query": rewritten})
+
+    mock_resp_classify = MagicMock(); mock_resp_classify.content = classify_plan_json
+    mock_resp_rewrite  = MagicMock(); mock_resp_rewrite.content  = rewrite_plan_json
     mock_llm_plan = MagicMock()
-    mock_llm_plan.ainvoke = AsyncMock(return_value=mock_resp_plan)
+    mock_llm_plan.ainvoke = AsyncMock(side_effect=[mock_resp_classify, mock_resp_rewrite])
 
     plan_state = {
         **base_state,
@@ -516,24 +688,39 @@ def test_chat():
     history_plan = result_plan["conversation_history"]
     assert history_plan[-1]["role"]    == "user"
     assert history_plan[-1]["content"] == "What about Dan?"
-    print("PASS: PLAN intent writes chat_intent + rewritten_query, no final_answer, appends user message")
+    assert mock_llm_plan.ainvoke.call_count == 2, \
+        f"PLAN must make two LLM calls (classify + rewrite), got {mock_llm_plan.ainvoke.call_count}"
+    print("PASS: PLAN intent fires classify + rewrite, writes rewritten_query, no final_answer")
 
-    # ── Test 5: PLAN with empty history — rewritten_query equals original ──
-    no_rewrite_json = json.dumps({
-        "intent":          "PLAN",
-        "rewritten_query": "Can Noa fly Business Class?",
-        "response":        None,
-    })
-    mock_resp_no_rewrite = MagicMock()
-    mock_resp_no_rewrite.content = no_rewrite_json
+    # ── Test 5: PLAN with empty history — rewrite returns original unchanged ──
+    classify_only_json = json.dumps({"intent": "PLAN", "response": None})
+    rewrite_same_json  = json.dumps({"rewritten_query": "Can Noa fly Business Class?"})
+    mock_resp_c = MagicMock(); mock_resp_c.content = classify_only_json
+    mock_resp_r = MagicMock(); mock_resp_r.content = rewrite_same_json
     mock_llm_no_rewrite = MagicMock()
-    mock_llm_no_rewrite.ainvoke = AsyncMock(return_value=mock_resp_no_rewrite)
+    mock_llm_no_rewrite.ainvoke = AsyncMock(side_effect=[mock_resp_c, mock_resp_r])
 
     with patch(patch_target, return_value=mock_llm_no_rewrite):
         result_no_rewrite = asyncio.run(chat_node(base_state))
 
     assert result_no_rewrite["rewritten_query"] == base_state["original_query"]
     print("PASS: PLAN with no history passes original query through unchanged")
+
+    # ── Test 5b: rewrite call parse failure falls back to original_query ──
+    # If the rewrite LLM returns invalid JSON, the Planner must still get a
+    # usable query (the original) instead of blocking the pipeline.
+    classify_fallback_json = json.dumps({"intent": "PLAN", "response": None})
+    mock_resp_cf = MagicMock(); mock_resp_cf.content = classify_fallback_json
+    mock_resp_bad = MagicMock(); mock_resp_bad.content = "not valid json at all"
+    mock_llm_fallback = MagicMock()
+    mock_llm_fallback.ainvoke = AsyncMock(side_effect=[mock_resp_cf, mock_resp_bad])
+
+    with patch(patch_target, return_value=mock_llm_fallback):
+        result_fallback = asyncio.run(chat_node(base_state))
+
+    assert result_fallback["rewritten_query"] == base_state["original_query"], \
+        "Rewrite parse failure must fall back to original_query"
+    print("PASS: rewrite call parse failure falls back to original_query")
 
     # ── Test 6: FORMAT AND DELIVER — LLM rewrites the synthesizer answer ──
     # The formatted response must differ meaningfully from the synthesizer output.
@@ -554,7 +741,13 @@ def test_chat():
 
     mock_llm_deliver.ainvoke = capture_deliver
 
-    deliver_state = {**CHAT_AGENT_STATE, "audit_result": {"verdict": "PASS", "notes": "All verified."}}
+    # Use a rewritten_query that differs from original_query so we can verify
+    # the formatter receives the resolved (rewritten) form.
+    deliver_state = {
+        **CHAT_AGENT_STATE,
+        "rewritten_query": "Can Noa fly Business Class based on her clearance level?",
+        "audit_result":    {"verdict": "PASS", "notes": "All verified."},
+    }
     with patch(patch_target, return_value=mock_llm_deliver):
         result_deliver = asyncio.run(chat_node(deliver_state))
 
@@ -568,8 +761,10 @@ def test_chat():
 
     # Confirm key prompt directives are present in the delivery system prompt
     system_msg = next(m["content"] for m in captured_deliver if m["role"] == "system")
-    assert "not found"     in system_msg.lower(), \
-        "Delivery system prompt must include 'not found' guidance"
+    assert "copyeditor" in system_msg.lower(), \
+        "Delivery system prompt must cast the LLM as a copyeditor"
+    assert "never invert polarity" in system_msg.lower(), \
+        "Delivery system prompt must forbid polarity inversion"
     assert "remove source attribution" in system_msg.lower(), \
         "Delivery system prompt must instruct the LLM to remove source attribution"
     assert "lead with the key fact" in system_msg.lower(), \
@@ -578,7 +773,13 @@ def test_chat():
     user_msg = next(m["content"] for m in captured_deliver if m["role"] == "user")
     assert "SOURCES:" not in user_msg, \
         "Deliver user template must not include sources block — sources are shown in the UI"
-    print("PASS: FORMAT AND DELIVER rewrites answer differently from synthesizer; prompt removes attribution")
+    # The formatter must receive the rewritten (resolved) query, not the raw original
+    assert "Can Noa fly Business Class based on her clearance level?" in user_msg, \
+        "Deliver user template must include the rewritten_query as the resolved question"
+    # Prior conversation context should reach the formatter
+    assert "RECENT CONVERSATION" in user_msg, \
+        "Deliver user template must include a RECENT CONVERSATION block"
+    print("PASS: FORMAT AND DELIVER uses rewritten_query + history; copyeditor constraint in prompt")
 
     # ── Test 6b: FORMAT AND DELIVER preserves conditions from synthesizer output ──
     # The synthesizer output contains a conditional rule. The Chat Agent must
@@ -703,28 +904,29 @@ def test_chat():
     assert "question 3" not in block   # older than MAX_CLASSIFICATION_HISTORY ago
     print(f"PASS: _format_history_block includes last {MAX_CLASSIFICATION_HISTORY} messages only")
 
-    # ── Test 9b: classification LLM call receives truncated history ──
-    # Build a state with 20 messages (10 turns) — only last 6 should reach the LLM
+    # ── Test 9b: classify + rewrite each receive their own truncated history ──
+    # Build a state with 20 messages (10 turns). Classify should see the last 6;
+    # rewrite should see the last 12. Both windows are validated independently.
     big_history = []
     for i in range(10):
         big_history.append({"role": "user",      "content": f"user-msg-{i}"})
         big_history.append({"role": "assistant",  "content": f"asst-msg-{i}"})
 
-    classify_truncate_json = json.dumps({
-        "intent":          "PLAN",
-        "rewritten_query": "What is the answer?",
-        "response":        None,
-    })
-    mock_resp_trunc = MagicMock()
-    mock_resp_trunc.content = classify_truncate_json
+    classify_truncate_json = json.dumps({"intent": "PLAN", "response": None})
+    rewrite_truncate_json  = json.dumps({"rewritten_query": "What is the answer?"})
+    mock_resp_classify_t = MagicMock(); mock_resp_classify_t.content = classify_truncate_json
+    mock_resp_rewrite_t  = MagicMock(); mock_resp_rewrite_t.content  = rewrite_truncate_json
 
-    captured_classify: list = []
-    async def capture_classify(messages):
-        captured_classify.extend(messages)
-        return mock_resp_trunc
+    # Capture each call's messages separately so we can assert windows independently.
+    captured_calls: list[list] = []
+    responses_iter = iter([mock_resp_classify_t, mock_resp_rewrite_t])
+
+    async def capture_each_call(messages):
+        captured_calls.append(list(messages))
+        return next(responses_iter)
 
     mock_llm_trunc = MagicMock()
-    mock_llm_trunc.ainvoke = capture_classify
+    mock_llm_trunc.ainvoke = capture_each_call
 
     trunc_state = {
         **base_state,
@@ -734,22 +936,34 @@ def test_chat():
     with patch(patch_target, return_value=mock_llm_trunc):
         asyncio.run(chat_node(trunc_state))
 
-    # The user message sent to the LLM should contain only the last 6 history messages
-    user_msg = next(m["content"] for m in captured_classify if m["role"] == "user")
-    # Oldest messages must NOT appear
-    assert "user-msg-0" not in user_msg, \
-        "Classification must not send old history (user-msg-0) to the LLM"
-    assert "user-msg-6" not in user_msg, \
-        "Classification must not send user-msg-6 (outside last 6) to the LLM"
-    # Recent messages must appear (last 6 = indices 14-19 = user-msg-7 through asst-msg-9)
-    assert "user-msg-7" in user_msg, \
-        "Classification must include recent history (user-msg-7)"
-    assert "asst-msg-9" in user_msg, \
-        "Classification must include the most recent message (asst-msg-9)"
-    # Full history is still preserved in state (not truncated)
+    assert len(captured_calls) == 2, \
+        f"PLAN must issue classify + rewrite (2 calls); got {len(captured_calls)}"
+
+    # Call 1 (classify): only last MAX_CLASSIFICATION_HISTORY=6 messages
+    classify_user_msg = next(m["content"] for m in captured_calls[0] if m["role"] == "user")
+    assert "user-msg-0" not in classify_user_msg, \
+        "Classify must not send old history (user-msg-0)"
+    assert "user-msg-6" not in classify_user_msg, \
+        "Classify must not send user-msg-6 (outside last 6)"
+    assert "user-msg-7" in classify_user_msg, "Classify must include user-msg-7"
+    assert "asst-msg-9" in classify_user_msg, "Classify must include most recent asst-msg-9"
+
+    # Call 2 (rewrite): last MAX_REWRITE_HISTORY=12 messages — wider window
+    rewrite_user_msg = next(m["content"] for m in captured_calls[1] if m["role"] == "user")
+    assert "user-msg-0" not in rewrite_user_msg, \
+        "Rewrite must not send oldest history (user-msg-0) when 20 messages exist"
+    # Rewrite window is 12 → should include user-msg-4 (message index 8, within last 12)
+    assert "user-msg-4" in rewrite_user_msg, \
+        "Rewrite must include user-msg-4 (inside last 12 messages)"
+    assert "asst-msg-9" in rewrite_user_msg, \
+        "Rewrite must include most recent asst-msg-9"
+
     assert len(trunc_state["conversation_history"]) == 20, \
-        "Full conversation_history must not be mutated by classification"
-    print(f"PASS: classification LLM receives only last {MAX_CLASSIFICATION_HISTORY} messages, full history preserved")
+        "Full conversation_history must not be mutated"
+    print(
+        f"PASS: classify receives last {MAX_CLASSIFICATION_HISTORY} messages, "
+        f"rewrite receives last {MAX_REWRITE_HISTORY} messages"
+    )
 
     # ── Test 10: fast pre-classification skips LLM for greetings ──
     mock_llm_fast = MagicMock()
@@ -829,20 +1043,21 @@ def test_chat():
     print("PASS: delivery path rejects when audit verdict is not PASS")
 
     # ── Test 14: multi-question message rewrites all questions ──────
+    # Classify returns PLAN; the dedicated rewrite call produces the full
+    # 3-part rewritten query with pronouns resolved.
     multi_q_rewritten = (
         "What is Dan Cohen's clearance level? "
         "What is Dan Cohen's salary range? "
         "Can Dan Cohen fly Business Class?"
     )
-    multi_q_json = json.dumps({
-        "intent":          "PLAN",
-        "rewritten_query": multi_q_rewritten,
-        "response":        None,
-    })
-    mock_resp_multi = MagicMock()
-    mock_resp_multi.content = multi_q_json
+    mock_resp_multi_classify = MagicMock()
+    mock_resp_multi_classify.content = json.dumps({"intent": "PLAN", "response": None})
+    mock_resp_multi_rewrite  = MagicMock()
+    mock_resp_multi_rewrite.content  = json.dumps({"rewritten_query": multi_q_rewritten})
     mock_llm_multi = MagicMock()
-    mock_llm_multi.ainvoke = AsyncMock(return_value=mock_resp_multi)
+    mock_llm_multi.ainvoke = AsyncMock(
+        side_effect=[mock_resp_multi_classify, mock_resp_multi_rewrite]
+    )
 
     multi_state = {
         **base_state,
@@ -865,6 +1080,264 @@ def test_chat():
     assert "Dan Cohen" in rq, \
         f"Rewritten query must resolve 'his' to 'Dan Cohen', got: {rq}"
     print("PASS: multi-question message rewrites all 3 questions with resolved context")
+
+    # ── Test 15: classify prompt contains post-clarification PLAN guidance ──
+    # The classifier must route confirmations after a clarification question
+    # to PLAN, not loop back to CLARIFY. We verify two things: (a) the prompt
+    # itself contains the post-clarification rule, and (b) when the mock
+    # returns PLAN, the path is taken as PLAN (not re-clarified).
+    assert "post-clarification" in _CLASSIFY_SYSTEM_PROMPT.lower(), \
+        "Classify prompt must mention post-clarification handling"
+    assert "never return clarify back-to-back" in _CLASSIFY_SYSTEM_PROMPT.lower(), \
+        "Classify prompt must forbid back-to-back CLARIFY responses"
+
+    post_clar_classify_json = json.dumps({"intent": "PLAN", "response": None})
+    post_clar_rewrite_json  = json.dumps({
+        "rewritten_query": "What is the salary range for Noa Levy?"
+    })
+    mock_resp_pc_c = MagicMock(); mock_resp_pc_c.content = post_clar_classify_json
+    mock_resp_pc_r = MagicMock(); mock_resp_pc_r.content = post_clar_rewrite_json
+    mock_llm_post_clar = MagicMock()
+    mock_llm_post_clar.ainvoke = AsyncMock(side_effect=[mock_resp_pc_c, mock_resp_pc_r])
+
+    post_clar_state = {
+        **base_state,
+        "original_query": "yes",
+        "conversation_history": [
+            {"role": "user",      "content": "maybe noa levy"},
+            {"role": "assistant", "content": "Did you mean Noa Levy (not Levi)?"},
+        ],
+    }
+    with patch(patch_target, return_value=mock_llm_post_clar):
+        result_pc = asyncio.run(chat_node(post_clar_state))
+
+    assert result_pc["chat_intent"] == "PLAN", \
+        f"'yes' after a clarification must route as PLAN, got {result_pc['chat_intent']!r}"
+    assert "Noa Levy" in result_pc["rewritten_query"], \
+        f"Rewritten query must name Noa Levy, got: {result_pc['rewritten_query']!r}"
+    print("PASS: post-clarification 'yes' routes as PLAN, rewrite reconstructs intent")
+
+    # ── Test 16: rewrite call sees enough history to reconstruct intent ──
+    # Build a state where the last assistant turn is a clarification and the
+    # user replied "yes". Capture the rewrite call's user message and assert
+    # it contains both the clarification question and the user's earlier
+    # concrete question about salary.
+    captured_rewrite: list = []
+    rewrite_capture_json = json.dumps({
+        "rewritten_query": "What is the salary range for Noa Levy?"
+    })
+    mock_resp_rw_classify = MagicMock()
+    mock_resp_rw_classify.content = json.dumps({"intent": "PLAN", "response": None})
+    mock_resp_rw = MagicMock(); mock_resp_rw.content = rewrite_capture_json
+
+    _rw_iter = iter([mock_resp_rw_classify, mock_resp_rw])
+    async def capture_rewrite_call(messages):
+        captured_rewrite.append(list(messages))
+        return next(_rw_iter)
+
+    mock_llm_rewrite = MagicMock()
+    mock_llm_rewrite.ainvoke = capture_rewrite_call
+
+    rewrite_state = {
+        **base_state,
+        "original_query": "yes",
+        "conversation_history": [
+            {"role": "user",      "content": "What is the salary range for Noa Levi?"},
+            {"role": "assistant", "content": "I could not find an employee named Noa Levi. Did you mean a similar name?"},
+            {"role": "user",      "content": "maybe noa levy"},
+            {"role": "assistant", "content": "Did you mean Noa Levy (not Levi)?"},
+        ],
+    }
+    with patch(patch_target, return_value=mock_llm_rewrite):
+        result_rw = asyncio.run(chat_node(rewrite_state))
+
+    assert len(captured_rewrite) == 2, \
+        f"Expected classify + rewrite (2 calls), got {len(captured_rewrite)}"
+
+    # Inspect the rewrite call's user message (second call)
+    rewrite_user_msg   = next(m["content"] for m in captured_rewrite[1] if m["role"] == "user")
+    rewrite_system_msg = next(m["content"] for m in captured_rewrite[1] if m["role"] == "system")
+
+    assert "salary range for Noa Levi" in rewrite_user_msg, \
+        "Rewrite call must see the user's original salary question in history"
+    assert "Did you mean Noa Levy" in rewrite_user_msg, \
+        "Rewrite call must see the clarification question in history"
+    assert "CURRENT USER MESSAGE" in rewrite_user_msg and "yes" in rewrite_user_msg, \
+        "Rewrite call must include the current 'yes' message"
+    # The rewrite system prompt must teach the post-clarification behavior
+    assert "post-clarification" in rewrite_system_msg.lower(), \
+        "Rewrite system prompt must teach post-clarification reconstruction"
+
+    assert "Noa Levy" in result_rw["rewritten_query"], \
+        f"Rewritten query must contain 'Noa Levy', got: {result_rw['rewritten_query']!r}"
+    assert "salary" in result_rw["rewritten_query"].lower(), \
+        f"Rewritten query must preserve the salary topic, got: {result_rw['rewritten_query']!r}"
+    print("PASS: rewrite call reconstructs intent from clarification confirmation with history")
+
+    # ── Test 17: formatter factual-preservation safety check ──
+    # (a) formatter inverts polarity — audited draft has no negation but
+    #     formatted output does → safety check must override with draft.
+    audited_positive_draft = (
+        "Noa Levi's salary is in the $85,000 - $110,000 range per year, "
+        "based on the employees table."
+    )
+    inverted_formatted = "There is no employee named Noa Levi in the system."
+    mock_resp_invert = MagicMock(); mock_resp_invert.content = inverted_formatted
+    mock_llm_invert = MagicMock()
+    mock_llm_invert.ainvoke = AsyncMock(return_value=mock_resp_invert)
+
+    invert_state = {
+        **base_state,
+        "final_answer":    audited_positive_draft,
+        "final_sources":   [{"source_id": "employees", "source_type": "csv", "label": "Employees"}],
+        "audit_result":    {"verdict": "PASS", "notes": "Verified."},
+        "rewritten_query": "What is the salary range for Noa Levi?",
+    }
+    with patch(patch_target, return_value=mock_llm_invert):
+        result_invert = asyncio.run(chat_node(invert_state))
+
+    assert result_invert["final_answer"] == audited_positive_draft, \
+        f"Safety check must revert to the audited draft when the formatter "\
+        f"introduces negation. Got: {result_invert['final_answer']!r}"
+    # History must record the audited draft, not the inverted formatted output
+    assert result_invert["conversation_history"][-1]["content"] == audited_positive_draft
+    print("PASS: formatter polarity inversion triggers safety check, audited draft delivered")
+
+    # (b) both draft and formatted contain legitimate negation → accept formatted
+    negative_draft = "No employee named Noa Levie was found in the records."
+    negative_formatted = "There is no employee named Noa Levie."
+    mock_resp_neg = MagicMock(); mock_resp_neg.content = negative_formatted
+    mock_llm_neg = MagicMock()
+    mock_llm_neg.ainvoke = AsyncMock(return_value=mock_resp_neg)
+
+    neg_state = {
+        **base_state,
+        "final_answer":    negative_draft,
+        "audit_result":    {"verdict": "PASS", "notes": "Verified."},
+        "rewritten_query": "What is the salary range for Noa Levie?",
+    }
+    with patch(patch_target, return_value=mock_llm_neg):
+        result_neg = asyncio.run(chat_node(neg_state))
+
+    assert result_neg["final_answer"] == negative_formatted, \
+        "When the audited draft already contains negation, the formatter's "\
+        "negated output is legitimate and must be delivered."
+    print("PASS: formatter legitimate negation (matches audited draft) is delivered unchanged")
+
+    # (c) neither draft nor formatted contains negation → formatted delivered
+    plain_draft     = "Dan Cohen earns $95,000 annually based on the employees table."
+    plain_formatted = "Dan Cohen makes $95,000 per year."
+    mock_resp_plain = MagicMock(); mock_resp_plain.content = plain_formatted
+    mock_llm_plain = MagicMock()
+    mock_llm_plain.ainvoke = AsyncMock(return_value=mock_resp_plain)
+
+    plain_state = {
+        **base_state,
+        "final_answer":    plain_draft,
+        "audit_result":    {"verdict": "PASS", "notes": "Verified."},
+        "rewritten_query": "What is Dan Cohen's salary?",
+    }
+    with patch(patch_target, return_value=mock_llm_plain):
+        result_plain = asyncio.run(chat_node(plain_state))
+
+    assert result_plain["final_answer"] == plain_formatted, \
+        "When neither draft nor formatted has negation, formatted must be delivered."
+    print("PASS: formatter non-negation rewrite is delivered unchanged")
+
+    # ── Test 18: 4-turn regression from the original trace ──
+    # Simulates: Dan Cohen salary → follow-up "and noa levi?" → ambiguous
+    # "maybe noa levy" → confirmation "yes". The critical assertion is that
+    # turn 4's rewritten_query names Noa Levy and salary, and is NOT the
+    # clarification question echoed back.
+    class _Seq:
+        def __init__(self, responses):
+            self._it = iter(responses)
+        async def ainvoke(self, messages):
+            resp = MagicMock()
+            resp.content = next(self._it)
+            return resp
+
+    # Turn 1 — "What is the salary range for Dan Cohen?"
+    t1_rewritten = "What is the salary range for Dan Cohen?"
+    turn1_mock = _Seq([
+        json.dumps({"intent": "PLAN", "response": None}),                # classify
+        json.dumps({"rewritten_query": t1_rewritten}),                   # rewrite
+    ])
+    turn1_state = {
+        **base_state,
+        "original_query":       "What is the salary range for Dan Cohen?",
+        "conversation_history": [],
+    }
+    with patch(patch_target, return_value=turn1_mock):
+        r1 = asyncio.run(chat_node(turn1_state))
+    assert r1["chat_intent"] == "PLAN"
+    assert "Dan Cohen" in r1["rewritten_query"]
+
+    # Turn 2 — "and noa levi?" — must rewrite to the full salary question
+    t2_rewritten = "What is the salary range for Noa Levi?"
+    turn2_mock = _Seq([
+        json.dumps({"intent": "PLAN", "response": None}),
+        json.dumps({"rewritten_query": t2_rewritten}),
+    ])
+    turn2_history = r1["conversation_history"] + [
+        {"role": "assistant", "content": "Dan Cohen's salary range is $90,000 - $110,000."},
+    ]
+    turn2_state = {
+        **base_state,
+        "original_query":       "and noa levi?",
+        "conversation_history": turn2_history,
+    }
+    with patch(patch_target, return_value=turn2_mock):
+        r2 = asyncio.run(chat_node(turn2_state))
+    assert r2["chat_intent"] == "PLAN"
+    assert "Noa Levi" in r2["rewritten_query"], \
+        f"Turn 2 must rewrite 'and noa levi?' into a full question about Noa Levi, "\
+        f"got: {r2['rewritten_query']!r}"
+    assert "salary" in r2["rewritten_query"].lower()
+
+    # Turn 3 — "maybe noa levy" — CLARIFY is acceptable (ambiguous)
+    t3_clar = "Did you mean Noa Levy (not Levi)?"
+    turn3_mock = _Seq([
+        json.dumps({"intent": "CLARIFY", "response": t3_clar}),
+    ])
+    turn3_history = r2["conversation_history"] + [
+        {"role": "assistant", "content": "I could not find an employee named Noa Levi."},
+    ]
+    turn3_state = {
+        **base_state,
+        "original_query":       "maybe noa levy",
+        "conversation_history": turn3_history,
+    }
+    with patch(patch_target, return_value=turn3_mock):
+        r3 = asyncio.run(chat_node(turn3_state))
+    assert r3["chat_intent"] in ("CLARIFY", "PLAN"), \
+        f"Turn 3 may classify as CLARIFY or PLAN, got {r3['chat_intent']!r}"
+
+    # Turn 4 — "yes" — MUST route as PLAN and reconstruct "salary range for Noa Levy"
+    # NEVER echo the clarification question itself as the rewritten query.
+    t4_rewritten = "What is the salary range for Noa Levy?"
+    turn4_mock = _Seq([
+        json.dumps({"intent": "PLAN", "response": None}),
+        json.dumps({"rewritten_query": t4_rewritten}),
+    ])
+    turn4_history = r3["conversation_history"]   # already contains the clarification
+    turn4_state = {
+        **base_state,
+        "original_query":       "yes",
+        "conversation_history": turn4_history,
+    }
+    with patch(patch_target, return_value=turn4_mock):
+        r4 = asyncio.run(chat_node(turn4_state))
+    assert r4["chat_intent"] == "PLAN", \
+        f"Turn 4 'yes' must route as PLAN, got {r4['chat_intent']!r}"
+    rq4 = r4["rewritten_query"]
+    assert "Noa Levy" in rq4, \
+        f"Turn 4 rewritten query must name 'Noa Levy', got: {rq4!r}"
+    assert "salary" in rq4.lower(), \
+        f"Turn 4 rewritten query must preserve the salary topic, got: {rq4!r}"
+    assert rq4 != t3_clar, \
+        f"Turn 4 rewrite must NOT echo the clarification question, got: {rq4!r}"
+    print("PASS: 4-turn regression — turn-4 'yes' reconstructs full Noa Levy salary intent")
 
     print("\nPASS: all chat tests passed")
 
