@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from core.llm_config import _load_config
 from core.manifest import get_manifest_detail_raw, get_manifest_index, get_manifest_index_raw
+from core.manifest_prefilter import get_last_prefilter_trace
 from core.retriever import ChromaRetriever
 from core.state import AgentState, Message, SourceRef
 from graph import compiled_graph
@@ -111,6 +112,7 @@ class TraceInfo(BaseModel):
     step_timings:            Dict[str, float]
     retry_history:           List[dict]
     planner_reasoning:       Optional[str]            = None
+    prefilter_sources:       Optional[List[dict]]     = None
 
 
 class ChatResponse(BaseModel):
@@ -359,6 +361,7 @@ async def chat(req: ChatRequest):
         step_timings=step_timings,
         retry_history=final_state.get("retry_history", []),
         planner_reasoning=final_state.get("planner_reasoning", "") if ran_pipeline else None,
+        prefilter_sources=get_last_prefilter_trace(req.session_id) if ran_pipeline else None,
     )
 
     # Build and store conversation entry

@@ -73,6 +73,7 @@ retrieval:
   reranker_enabled: true
   chunk_size: 500          # Target characters per chunk at ingest time
   chunk_overlap: 50        # Overlap between consecutive chunks at ingest time
+  prefilter_top_k: 3       # Sources retrieved from source_index before Planner
 
 # Data Paths
 paths:

@@ -1022,6 +1022,7 @@ async def _run_all_queries(question_nums: set[int] | None = None) -> List[dict]:
                 "synthesis": _build_synthesis(trace),
                 "audit": _build_audit(trace),
                 "step_timings": trace.get("step_timings", {}),
+                "prefilter_sources": trace.get("prefilter_sources"),
             }
             results.append(result)
 
@@ -1054,6 +1055,7 @@ async def _run_all_queries(question_nums: set[int] | None = None) -> List[dict]:
                 "synthesis": None,
                 "audit": None,
                 "step_timings": {},
+                "prefilter_sources": None,
             })
 
     return results

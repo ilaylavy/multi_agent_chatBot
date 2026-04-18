@@ -8,6 +8,7 @@
 
 pdfs:
 - id: travel_policy_2024
+  kind: policy
   name: Travel Policy 2024
   summary: This document outlines the 2024 corporate travel policy including flight
     class entitlements, booking rules, hotel allowances, per diem rates, and expense
@@ -17,31 +18,45 @@ pdfs:
   - advance flight booking requirements and exceptions
   - hotel nightly reimbursement limits by clearance level
   - per diem meal and incidental expense rates
+<<<<<<< HEAD
   - travel expense claim submission deadlines
   - receipt requirements for expense claims
   - approval thresholds for travel expenses
   - reimbursement processing timelines
   - dispute procedures for travel reimbursements
   - annual adjustment of per diem rates
+=======
+  - expense claim submission deadlines and receipt policies
+  - expense approval thresholds by amount
+  - reimbursement processing timelines and payment methods
+  - rules for last-minute travel booking approvals
+  - requirements for itemized receipts and manager approvals
+  - dispute resolution process for reimbursement claims
+>>>>>>> a9edd24ad314555b6507a4002f2b29a512a92ff5
   notes: ''
 - id: hr_handbook_v3
+  kind: policy
   name: Hr Handbook V3
   summary: This HR Handbook v3 outlines the company's policies and procedures on employee
     onboarding, leave entitlements, performance reviews, and code of conduct.
   contains:
   - onboarding checklist requirements
   - required employment documents for new hires
-  - IT provisioning and security setup policies
+  - IT system access and security protocols
   - leave entitlements by clearance level
-  - leave request procedures and advance notice rules
-  - annual, sick, and parental leave details
-  - performance review schedule and rating criteria
+  - leave request procedures and advance notice
+  - performance rating scale and review schedule
   - performance improvement plan guidelines
+<<<<<<< HEAD
   - confidentiality and NDA obligations
+=======
+  - confidentiality and non-disclosure rules
+>>>>>>> a9edd24ad314555b6507a4002f2b29a512a92ff5
   - conflict of interest disclosure requirements
-  - disciplinary action stages and gross misconduct policies
+  - disciplinary process stages and gross misconduct policies
   notes: ''
 - id: it_security_policy
+  kind: policy
   name: It Security Policy
   summary: This IT Security Policy document outlines password requirements, data classification
     standards, security incident reporting procedures, data access permissions, and
@@ -50,15 +65,16 @@ pdfs:
   - password complexity and rotation rules
   - multi-factor authentication enforcement
   - data classification categories and handling rules
-  - security incident definition and reporting procedures
-  - incident reporting deadlines and contact methods
-  - immediate incident response actions
+  - security incident definition and reporting deadlines
+  - incident reporting channels and immediate response steps
   - data access permissions by clearance level
   - temporary elevated access approval process
   - security incident severity classification and escalation
   - post-incident review and reporting requirements
+  - encryption and storage requirements for restricted data
   notes: ''
 - id: finance_policy_2024
+  kind: policy
   name: Finance Policy 2024
   summary: This Finance Policy 2024 document outlines expense approval thresholds,
     project budget limits by department and clearance level, reimbursement procedures,
@@ -68,30 +84,42 @@ pdfs:
   - expense receipt requirements
   - expense turnaround times
   - monthly project budget limits by department
+<<<<<<< HEAD
   - clearance level budget restrictions
   - budget overrun justification and approval
   - expense reimbursement submission and processing
+=======
+  - budget overrun approval process
+  - reimbursement claim submission and processing
+>>>>>>> a9edd24ad314555b6507a4002f2b29a512a92ff5
   - international expense pre-approval and currency conversion
   - vendor invoice payment terms and discounts
-  - late payment penalty calculations
-  - vendor dispute escalation process
+  - small purchase payment policies
+  - vendor dispute escalation procedures
   notes: ''
 tables:
 - id: employees
+  kind: record
   name: Employees
-  summary: This table contains employee information including personal details, department,
-    security clearance, hire date, and managerial hierarchy.
+  summary: This table contains employee details including identification, contact,
+    department, security clearance, hire date, and managerial hierarchy.
   contains:
   - employee names
   - employee email addresses
   - department assignments
   - security clearance levels
   - hire dates
+<<<<<<< HEAD
   - manager relationships
   - organizational hierarchy
   - employee identifiers
+=======
+  - manager-subordinate relationships
+  - employee identification numbers
+>>>>>>> a9edd24ad314555b6507a4002f2b29a512a92ff5
   notes: ''
 - id: salary_bands
+  kind: record
   name: Salary Bands
   summary: This table lists salary ranges by clearance level and department within
     an organization.
@@ -102,13 +130,20 @@ tables:
   - minimum salaries
   - maximum salaries
   - organizational departments
-  - security clearance salary bands
-  - USD salary data
+  - security clearance classifications
+  - salary currency information
+  - employee compensation bands
   notes: ''
 - id: training_records
+  kind: record
   name: Training Records
+<<<<<<< HEAD
   summary: This table records employee training completions, including training types,
     dates, status, and scores.
+=======
+  summary: This table records employee training sessions including training type,
+    completion and expiry dates, status, and scores.
+>>>>>>> a9edd24ad314555b6507a4002f2b29a512a92ff5
   contains:
   - employee training records
   - training completion dates
@@ -120,6 +155,7 @@ tables:
   - training course types
   notes: ''
 - id: projects
+  kind: record
   name: Projects
   summary: This table contains detailed information about company projects including
     their budgets, timelines, departments, and lead employees.

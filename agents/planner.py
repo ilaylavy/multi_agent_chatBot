@@ -15,6 +15,7 @@ import json
 import logging
 
 from core.llm_config import get_llm
+from core.manifest_prefilter import prefilter_manifest, _prefilter_traces
 from core.parse import parse_llm_json
 from core.state import AgentState, Task
 
@@ -28,6 +29,18 @@ logger = logging.getLogger(__name__)
 _SYSTEM_PROMPT = """\
 You are a query planner. Decompose the user's question into tasks. Each task \
 retrieves information from one or more sources listed in the manifest.
+
+Source selection — IMPORTANT: every source has a kind field. \
+kind=record means the source holds actual entity data and values (e.g. a \
+table of project budgets or employee records). kind=policy means the source \
+holds rules, limits, entitlements, or procedures (e.g. a PDF defining budget \
+limit rules or expense policies). \
+When the question asks about a rule, limit, threshold, or procedure, you MUST \
+route to a kind=policy source. When it asks for a specific entity's actual \
+data or values, route to a kind=record source. \
+Use the contains field to pick the most specific match within the chosen kind. \
+Do not confuse a record source that stores data about a topic with a policy \
+source that defines rules about the same topic.
 
 Routing: assign worker_type by source type in the manifest. PDF sources use \
 "librarian". CSV or SQLite sources use "data_scientist".
@@ -53,15 +66,15 @@ Dependencies: if a task requires a value that must first be retrieved from \
 another source, create that retrieval as a separate task and set depends_on. \
 If a task can run independently, set depends_on to null. Apply this per entity.
 
-Use the minimum number of tasks. Only use sources from the manifest. Use the \
-contains field to pick the right source. Keep justifications to one sentence.
+Use the minimum number of tasks. Only use sources from the manifest. \
+Keep justifications to one sentence.
 
 Respond with ONLY JSON — no explanation, no markdown:
 {
   "reasoning": {
     "information_needed": ["what facts or rules are needed"],
     "source_assignments": [
-      {"info": "...", "source_ids": ["..."], "worker_type": "...", "justification": "..."}
+      {"info": "...", "kind_required": "record|policy", "source_ids": ["..."], "worker_type": "...", "justification": "..."}
     ],
     "can_combine": "Before splitting: for source_assignments that share the same worker_type, can they be combined into a single task? If yes, merge them.",
     "dependencies": ["e.g. t2 needs t1 because ..."]
@@ -115,12 +128,17 @@ def planner_view(state: AgentState) -> dict:
 async def planner_node(state: AgentState) -> dict:
     view = planner_view(state)
 
+    # Pre-filter manifest using rewritten_query (or original_query fallback)
+    query = view["original_query"]  # planner_view already resolves rewritten
+    filtered_manifest, prefilter_trace = prefilter_manifest(query)
+    _prefilter_traces[state.get("session_id", "")] = prefilter_trace
+
     retry_section = ""
     if "retry_notes" in view:
         retry_section = _RETRY_NOTE_SECTION.format(retry_notes=view["retry_notes"])
 
     user_message = _USER_TEMPLATE.format(
-        manifest_context=view["manifest_context"],
+        manifest_context=filtered_manifest,
         original_query=view["original_query"],
         retry_section=retry_section,
     )
