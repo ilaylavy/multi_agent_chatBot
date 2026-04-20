@@ -33,9 +33,10 @@ from core.llm_config import _load_config
 from core.manifest import get_manifest_detail_raw, get_manifest_index, get_manifest_index_raw
 from core.manifest_prefilter import get_last_prefilter_trace
 from core.retriever import ChromaRetriever
+from core.session_context import get_session_context
 from core.state import AgentState, Message, SourceRef
 from graph import compiled_graph
-from ingestion.manifest_writer import delete_source_from_manifest
+from ingestion.manifest_writer import delete_source_from_manifest, regenerate_data_context
 from ingestion.pdf_ingestor import ingest_pdf
 from ingestion.table_ingestor import ingest_table
 
@@ -99,20 +100,23 @@ class ChatRequest(BaseModel):
 
 
 class TraceInfo(BaseModel):
-    retry_count:             int
-    audit_verdict:           Optional[str]            = None
-    audit_notes:             Optional[str]            = None
-    plan:                    Optional[List[dict]]     = None
-    task_results:            dict
-    synthesizer_output:      str
-    chat_intent:             str
-    rewritten_query:         str
-    query_sent_to_planner:   Optional[str]            = None
-    chat_formatted_response: bool
-    step_timings:            Dict[str, float]
-    retry_history:           List[dict]
-    planner_reasoning:       Optional[str]            = None
-    prefilter_sources:       Optional[List[dict]]     = None
+    retry_count:                  int
+    audit_verdict:                Optional[str]            = None
+    audit_notes:                  Optional[str]            = None
+    plan:                         Optional[List[dict]]     = None
+    task_results:                 dict
+    synthesizer_output:           str
+    chat_intent:                  str
+    rewritten_query:              str
+    query_sent_to_planner:        Optional[str]            = None
+    chat_formatted_response:      bool
+    step_timings:                 Dict[str, float]
+    retry_history:                List[dict]
+    planner_reasoning:            Optional[str]            = None
+    prefilter_sources:            Optional[List[dict]]     = None
+    chat_reasoning:               Optional[str]            = None
+    chat_session_context_before:  Optional[Dict[str, Any]] = None
+    chat_session_context_after:   Optional[Dict[str, Any]] = None
 
 
 class ChatResponse(BaseModel):
@@ -236,11 +240,13 @@ def get_sources():
 
 
 @app.delete("/sources/{source_id}")
-def delete_source(source_id: str):
+async def delete_source(source_id: str):
     try:
         delete_source_from_manifest(source_id)
     except ValueError as exc:
         return JSONResponse(status_code=404, content=ErrorResponse(error=str(exc)).model_dump())
+
+    await regenerate_data_context()
 
     # ChromaDB collection only exists for PDF sources; silently skip if absent
     chromadb_removed = False
@@ -273,6 +279,7 @@ async def chat(req: ChatRequest):
         "conversation_history": history,
         "chat_intent":          "",
         "rewritten_query":      "",
+        "chat_reasoning":       "",
         "plan":                 [],
         "manifest_context":     get_manifest_index(),
         "planner_reasoning":    "",
@@ -288,6 +295,10 @@ async def chat(req: ChatRequest):
         "final_answer":         "",
         "final_sources":        [],
     }
+
+    # Snapshot session context before the graph runs so the trace can show
+    # what the reasoning call saw versus what it wrote back.
+    session_context_before = get_session_context(req.session_id)
 
     # Stream graph execution to capture per-node timings
     step_timings: dict[str, float] = {}
@@ -328,6 +339,10 @@ async def chat(req: ChatRequest):
 
     _sessions[req.session_id] = list(final_state["conversation_history"])
 
+    # Snapshot session context after the graph runs to capture any update
+    # the reasoning call merged in.
+    session_context_after = get_session_context(req.session_id)
+
     rewritten = final_state.get("rewritten_query", "")
     synthesizer_output = final_state.get("synthesizer_output", "")
     intent = final_state.get("chat_intent", "")
@@ -362,14 +377,19 @@ async def chat(req: ChatRequest):
         retry_history=final_state.get("retry_history", []),
         planner_reasoning=final_state.get("planner_reasoning", "") if ran_pipeline else None,
         prefilter_sources=get_last_prefilter_trace(req.session_id) if ran_pipeline else None,
+        chat_reasoning=final_state.get("chat_reasoning") or None,
+        chat_session_context_before=session_context_before,
+        chat_session_context_after=session_context_after,
     )
 
-    # Build and store conversation entry
+    # Build and store the full conversation entry (used by GET
+    # /conversation/{session_id} for the debug log).
     session_log = _conversation_log.setdefault(req.session_id, [])
     turn_number = len(session_log) + 1
-    entry: Dict[str, Any] = {
+    timestamp = datetime.now(timezone.utc).isoformat()
+    full_entry: Dict[str, Any] = {
         "turn_number":    turn_number,
-        "timestamp":      datetime.now(timezone.utc).isoformat(),
+        "timestamp":      timestamp,
         "session_id":     req.session_id,
         "original_query": req.query,
         "rewritten_query": rewritten,
@@ -378,14 +398,23 @@ async def chat(req: ChatRequest):
         "final_sources":  final_state["final_sources"],
         "trace":          trace.model_dump(),
     }
-    session_log.append(entry)
+    session_log.append(full_entry)
+
+    # The response-side conversation_entry is a thin identifier — the trace
+    # already carries every detail the frontend needs for this turn. The full
+    # entry remains retrievable from /conversation/{session_id}.
+    slim_entry: Dict[str, Any] = {
+        "turn_number":    turn_number,
+        "timestamp":      timestamp,
+        "original_query": req.query,
+    }
 
     return ChatResponse(
         final_answer=final_state["final_answer"],
         final_sources=final_state["final_sources"],
         session_id=req.session_id,
         trace=trace,
-        conversation_entry=entry,
+        conversation_entry=slim_entry,
     )
 
 
@@ -485,18 +514,16 @@ def test_api():
     assert isinstance(trace["step_timings"], dict), "step_timings must be a dict"
     assert "classification_ms" in trace["step_timings"], \
         "step_timings must include classification_ms for chat_node"
-    # conversation_entry
+    # conversation_entry — slimmed: only turn_number, timestamp, original_query
     assert "conversation_entry" in body, "Response must include conversation_entry"
     ce = body["conversation_entry"]
     assert ce["turn_number"]    == 1
-    assert ce["session_id"]     == "test-session-001"
     assert ce["original_query"] == "What is Noa Levi's clearance level?"
-    assert ce["rewritten_query"] == "What is Noa Levi's clearance level?"
-    assert ce["chat_intent"]    == "PLAN"
-    assert ce["final_answer"]   == "Noa Levi has clearance level A."
-    assert isinstance(ce["final_sources"], list)
-    assert isinstance(ce["trace"], dict)
     assert "timestamp" in ce
+    # Slimmed entry must not duplicate fields already in trace / top-level
+    for removed in ("session_id", "rewritten_query", "chat_intent",
+                    "final_answer", "final_sources", "trace"):
+        assert removed not in ce, f"slim conversation_entry must not include {removed}"
     print(f"PASS: POST /chat returns correct shape with enriched trace: {body['final_answer']}")
 
     # ── Test 3: POST /chat when graph raises → HTTP 500 ──────────
@@ -636,6 +663,7 @@ def test_api():
     mock_chroma_client.delete_collection = MagicMock()
 
     with patch(f"{__name__}.delete_source_from_manifest") as mock_del, \
+         patch(f"{__name__}.regenerate_data_context", new=AsyncMock(return_value="ok")) as mock_regen, \
          patch(f"{__name__}.ChromaRetriever") as mock_cr:
         mock_cr.return_value._client = mock_chroma_client
         resp = client.delete("/sources/travel_policy_2024")
@@ -645,6 +673,7 @@ def test_api():
     assert body["deleted"]                    == "travel_policy_2024"
     assert body["chromadb_collection_removed"] is True
     mock_del.assert_called_once_with("travel_policy_2024")
+    mock_regen.assert_awaited_once()
     mock_chroma_client.delete_collection.assert_called_once_with("travel_policy_2024")
     print(f"PASS: DELETE /sources/travel_policy_2024 returns correct shape: {body}")
 
@@ -667,6 +696,7 @@ def test_api():
     )
 
     with patch(f"{__name__}.delete_source_from_manifest"), \
+         patch(f"{__name__}.regenerate_data_context", new=AsyncMock(return_value="ok")), \
          patch(f"{__name__}.ChromaRetriever") as mock_cr2:
         mock_cr2.return_value._client = mock_chroma_client_no_coll
         resp = client.delete("/sources/employees")
@@ -932,7 +962,7 @@ def test_api():
     assert t17["query_sent_to_planner"] is None, "DIRECT must have null query_sent_to_planner"
     assert t17["chat_formatted_response"] is False
     assert isinstance(t17["step_timings"], dict)
-    assert body["conversation_entry"]["chat_intent"] == "DIRECT"
+    assert body["trace"]["chat_intent"] == "DIRECT"
     print("PASS: DIRECT intent sets pipeline-only trace fields to null")
 
     # ── Test 18: GET /conversation/{session_id} returns conversation log ──

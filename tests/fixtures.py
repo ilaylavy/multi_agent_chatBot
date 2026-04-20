@@ -15,6 +15,7 @@ CHAT_AGENT_STATE: dict[str, Any] = {
     ],
     "chat_intent": "PLAN",
     "rewritten_query": "",
+    "chat_reasoning": "",
     "final_answer": "Yes. Noa holds clearance level A, which entitles her to Business Class on flights over 4 hours.",
     "final_sources": [
         {"source_id": "travel_policy_2024", "source_type": "pdf", "label": "Travel Policy 2024"},

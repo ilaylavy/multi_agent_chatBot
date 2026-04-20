@@ -50,6 +50,7 @@ This project has four distinct data locations. Confusing them is the single most
 - **Do not re-ingest without explicit user instruction.** Running `scripts/ingest_all.py` rewrites both committed manifest YAML files via non-deterministic LLM calls, producing a noisy diff that is almost never what the user wants in a PR. Re-ingestion is appropriate only when fixture data itself has changed.
 - **If a fixture file is missing on disk**, do not silently regenerate it. Tell the user. The only exception is `conftest.py`'s session fixture for `employees.csv`, which restores that one file — do not extend this pattern to other fixtures without asking.
 - **The manifests in `data/manifest_*.yaml` are committed but not reviewed line-by-line.** Do not edit them by hand. Changes flow through ingestion code.
+- **All LLM prompts must be domain-agnostic** Prompts are product code — they ship to customers with completely different data. Never reference specific source names, table names, column names, entity types, or domain concepts from the development dataset in any system prompt or user template. If a prompt needs to reference what the system contains, it must derive that information at runtime from the manifest or data context, not hardcode it. A prompt that mentions "employees", "clearance levels", or "travel policy" only works for our test data. A prompt that says "the available data sources" or "the entities in your records" works for any deployment.
 
 ---
 
