@@ -18,21 +18,12 @@ pdfs:
   - advance flight booking requirements and exceptions
   - hotel nightly reimbursement limits by clearance level
   - per diem meal and incidental expense rates
-<<<<<<< HEAD
-  - travel expense claim submission deadlines
-  - receipt requirements for expense claims
-  - approval thresholds for travel expenses
-  - reimbursement processing timelines
-  - dispute procedures for travel reimbursements
-  - annual adjustment of per diem rates
-=======
   - expense claim submission deadlines and receipt policies
   - expense approval thresholds by amount
   - reimbursement processing timelines and payment methods
   - rules for last-minute travel booking approvals
   - requirements for itemized receipts and manager approvals
   - dispute resolution process for reimbursement claims
->>>>>>> a9edd24ad314555b6507a4002f2b29a512a92ff5
   notes: ''
 - id: hr_handbook_v3
   kind: policy
@@ -47,11 +38,7 @@ pdfs:
   - leave request procedures and advance notice
   - performance rating scale and review schedule
   - performance improvement plan guidelines
-<<<<<<< HEAD
-  - confidentiality and NDA obligations
-=======
   - confidentiality and non-disclosure rules
->>>>>>> a9edd24ad314555b6507a4002f2b29a512a92ff5
   - conflict of interest disclosure requirements
   - disciplinary process stages and gross misconduct policies
   notes: ''
@@ -84,14 +71,8 @@ pdfs:
   - expense receipt requirements
   - expense turnaround times
   - monthly project budget limits by department
-<<<<<<< HEAD
-  - clearance level budget restrictions
-  - budget overrun justification and approval
-  - expense reimbursement submission and processing
-=======
   - budget overrun approval process
   - reimbursement claim submission and processing
->>>>>>> a9edd24ad314555b6507a4002f2b29a512a92ff5
   - international expense pre-approval and currency conversion
   - vendor invoice payment terms and discounts
   - small purchase payment policies
@@ -109,14 +90,8 @@ tables:
   - department assignments
   - security clearance levels
   - hire dates
-<<<<<<< HEAD
-  - manager relationships
-  - organizational hierarchy
-  - employee identifiers
-=======
   - manager-subordinate relationships
   - employee identification numbers
->>>>>>> a9edd24ad314555b6507a4002f2b29a512a92ff5
   notes: ''
 - id: salary_bands
   kind: record
@@ -137,13 +112,8 @@ tables:
 - id: training_records
   kind: record
   name: Training Records
-<<<<<<< HEAD
-  summary: This table records employee training completions, including training types,
-    dates, status, and scores.
-=======
   summary: This table records employee training sessions including training type,
     completion and expiry dates, status, and scores.
->>>>>>> a9edd24ad314555b6507a4002f2b29a512a92ff5
   contains:
   - employee training records
   - training completion dates

@@ -69,6 +69,7 @@ class AgentState(TypedDict):
     conversation_history: List[Message]
     chat_intent:          str   # "DIRECT" | "CLARIFY" | "PLAN" | "" (empty until Chat sets it)
     rewritten_query:      str   # context-enriched query; empty until Chat sets it
+    chat_reasoning:       str   # structured reasoning JSON from the Chat LLM (empty until Chat sets it)
 
     # Planning
     plan:                 List[Task]
@@ -181,6 +182,7 @@ def test_state():
         "conversation_history": [{"role": "user", "content": "What was revenue in Q3?"}],
         "chat_intent":          "",
         "rewritten_query":      "",
+        "chat_reasoning":       "",
         "plan":                 [{"task_id": "t1", "worker_type": "data_scientist",
                                   "description": "Look up Q3 revenue", "source_ids": ["financials"]}],
         "manifest_context":     "financials: quarterly revenue table",

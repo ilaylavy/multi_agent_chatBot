@@ -880,6 +880,8 @@ function appendAssistantBubble(data, query) {
         ${notes != null ? `<div><strong>Audit notes:</strong> ${notes}</div>` : ''}
         ${prefilterHtml}
         ${hasPlan ? `<div><strong>Plan:</strong></div><ol>${planHtml}</ol>` : ''}
+        ${renderChatReasoning(t.chat_reasoning)}
+        ${renderSessionContext(t.chat_session_context_before, t.chat_session_context_after)}
         ${t.planner_reasoning ? `<details class="retry-attempt" style="margin-top:0.4rem"><summary><strong>Planner Reasoning</strong></summary><div class="retry-attempt-body"><pre style="white-space:pre-wrap;max-height:300px">${esc(t.planner_reasoning)}</pre></div></details>` : ''}
         ${synthDraft ? `<div style="margin-top:0.6rem"><strong>Synthesizer Draft</strong> <em style="color:var(--pico-muted-color);font-size:0.75rem">(Draft before Audit)</em></div><div class="task-output" style="margin-top:0.25rem;white-space:pre-wrap">${esc(synthDraft)}</div>` : ''}
         ${timingsHtml}
@@ -1144,6 +1146,82 @@ function esc(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/**
+ * Render the Chat agent's structured reasoning as a readable key-value list.
+ * Falls back to a raw <pre> block if the payload cannot be parsed as JSON.
+ */
+function renderChatReasoning(raw) {
+  if (!raw) return '';
+  let parsed = null;
+  try { parsed = JSON.parse(raw); } catch (_) { /* handled below */ }
+
+  let bodyHtml;
+  if (parsed && typeof parsed === 'object') {
+    const r = parsed.reasoning || {};
+    const rows = [
+      ['Decision',            parsed.decision],
+      ['Conversation state',  r.conversation_state],
+      ['User intent',         r.user_intent],
+      ['Intent type',         r.intent_type],
+      ['Gaps',                Array.isArray(r.gaps) ? (r.gaps.length ? r.gaps.join('; ') : '(none)') : r.gaps],
+      ['Decision rationale',  r.decision_rationale],
+      ['Rewritten query',     parsed.rewritten_query],
+      ['Clarifying question', parsed.clarifying_question],
+      ['Direct response',     parsed.direct_response],
+    ];
+    const rowHtml = rows
+      .filter(([_, v]) => v != null && v !== '')
+      .map(([k, v]) => `<tr><th style="text-align:left;padding-right:0.6rem;vertical-align:top">${esc(k)}</th><td>${esc(v)}</td></tr>`)
+      .join('');
+    const updateKeys = parsed.session_context_update && typeof parsed.session_context_update === 'object'
+      ? Object.keys(parsed.session_context_update) : [];
+    const updateRow = updateKeys.length
+      ? `<tr><th style="text-align:left;padding-right:0.6rem;vertical-align:top">Session context update</th><td>${updateKeys.map(k => `<code>${esc(k)}</code>=<em>${esc(parsed.session_context_update[k])}</em>`).join(', ')}</td></tr>`
+      : '';
+    bodyHtml = `<table style="font-size:0.8rem">${rowHtml}${updateRow}</table>`;
+  } else {
+    bodyHtml = `<pre style="white-space:pre-wrap;max-height:300px">${esc(raw)}</pre>`;
+  }
+
+  return `<details class="retry-attempt" style="margin-top:0.4rem"><summary><strong>Chat Reasoning</strong></summary><div class="retry-attempt-body">${bodyHtml}</div></details>`;
+}
+
+/**
+ * Render the session context before/after snapshots for the current turn.
+ * Highlights new or changed keys so the debug trace makes identity carry-
+ * forward easy to see.
+ */
+function renderSessionContext(before, after) {
+  const b = before || {};
+  const a = after  || {};
+  const bKeys = Object.keys(b);
+  const aKeys = Object.keys(a);
+  if (!bKeys.length && !aKeys.length) return '';
+
+  const allKeys = Array.from(new Set([...bKeys, ...aKeys]));
+  const rows = allKeys.map(k => {
+    const bv = b[k];
+    const av = a[k];
+    const changed = bv !== av;
+    const color = changed ? 'var(--pico-primary)' : 'inherit';
+    const weight = changed ? '600' : '400';
+    return `<tr style="color:${color};font-weight:${weight}">
+      <th style="text-align:left;padding-right:0.6rem">${esc(k)}</th>
+      <td>${bv != null ? esc(bv) : '<em style="color:var(--pico-muted-color)">—</em>'}</td>
+      <td>${av != null ? esc(av) : '<em style="color:var(--pico-muted-color)">—</em>'}</td>
+    </tr>`;
+  }).join('');
+
+  return `<details class="retry-attempt" style="margin-top:0.4rem"><summary><strong>Session Context</strong> <em style="color:var(--pico-muted-color);font-size:0.75rem">(${aKeys.length} fact${aKeys.length === 1 ? '' : 's'})</em></summary>
+    <div class="retry-attempt-body">
+      <table style="font-size:0.8rem;width:100%">
+        <thead><tr><th style="text-align:left">Key</th><th style="text-align:left">Before</th><th style="text-align:left">After</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </details>`;
 }
 </script>
 </body>

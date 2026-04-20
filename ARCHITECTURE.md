@@ -91,6 +91,7 @@ class AgentState(TypedDict):
     conversation_history: List[Message]
     chat_intent:          str              # "DIRECT" | "CLARIFY" | "PLAN" | ""
     rewritten_query:      str              # context-enriched query; empty until Chat sets it
+    chat_reasoning:       str              # structured reasoning JSON from Chat LLM
 
     # Planning
     plan:                 List[Task]
@@ -158,7 +159,7 @@ Every agent sees only its designated fields. The LLM prompt is built from the vi
 
 | Agent | Fields in View |
 |-------|---------------|
-| Chat | original_query, conversation_history, final_answer, final_sources, chat_intent, rewritten_query |
+| Chat | original_query, conversation_history, final_answer, final_sources, chat_intent, rewritten_query, chat_reasoning |
 | Planner | original_query (or rewritten_query if set), manifest_context, retry_notes (on retry only) |
 | Router | plan |
 | Librarian | task, manifest_details (caller-injected) |
@@ -210,25 +211,46 @@ Each retry attempt is recorded in `retry_history` with `{attempt, draft_answer, 
 
 ### Agent 1 — Chat Agent (`agents/chat.py`)
 
-**Job:** Entry/exit point. Classify intent, rewrite queries for context, deliver formatted answers.
+**Job:** Entry/exit point. Reason about intent, extract stable user facts, rewrite queries for context, deliver formatted answers.
 
 **Model:** `gpt-4.1-nano`, temperature 0.3
 
-**Prompt philosophy:** Lightweight router on entry, minimal formatter on exit. No domain knowledge — the Chat Agent knows nothing about the data sources.
+**Prompt philosophy:** A single reasoning call on entry (understand → assess → act); a minimal formatter on exit. No hardcoded domain knowledge — data awareness comes at runtime from `core/data_context.py`.
 
 **Four execution paths:**
 
-1. **Retry exhaustion** — `final_answer` empty + `retry_count >= max_attempts`: No LLM call. Returns the failure message from config.yaml.
+1. **Retry exhaustion** — `final_answer` empty + `retry_count >= max_attempts`: No reasoning call. If `synthesizer_output` is present, one LLM call composes an honest partial answer; otherwise returns the failure message from config.yaml.
 
 2. **Fast greeting** — Regex match against `^(hi|hello|hey|thanks|bye|goodbye)[\s!.,?]*$` (max 20 chars): No LLM call. Returns a canned response from a hardcoded map. Sets `chat_intent="DIRECT"`.
 
-3. **Classify and route** — Initial entry, `final_answer` empty: LLM classifies into DIRECT/CLARIFY/PLAN. Uses last `MAX_CLASSIFICATION_HISTORY` (6) messages for context. Outputs `{intent, rewritten_query, response}`. PLAN routes to Planner; DIRECT/CLARIFY sets `final_answer` immediately.
+3. **Reason and route** — Initial entry, `final_answer` empty: One LLM call that performs the full chain of thought. Prompt inputs: conversation history (last `MAX_REASONING_HISTORY` messages, default 12), per-session context from `core/session_context.py`, and runtime data context from `core/data_context.py`. Output schema:
+   ```json
+   {
+     "reasoning": {
+       "conversation_state": "fresh|follow-up|post_clarification|correction",
+       "user_intent": "one sentence",
+       "intent_type": "information_request|self_handled",
+       "gaps": [],
+       "decision_rationale": "one sentence"
+     },
+     "decision": "PLAN|CLARIFY|DIRECT",
+     "rewritten_query": "",
+     "clarifying_question": "",
+     "direct_response": "",
+     "session_context_update": {}
+   }
+   ```
+   Session context extraction is ambient — any self-identifying facts (name, department, role, team, ID) emitted in `session_context_update` are merged into the session store on every turn, independent of decision. On parse failure, falls back to `decision=PLAN` with `rewritten_query=original_query` and an empty context update.
 
-4. **Format and deliver** — `final_answer` populated by pipeline: Guards on `audit_result.verdict == "PASS"`. LLM reformats the synthesized answer — removes source attribution phrases, keeps conditions/exceptions, max 2 sentences. Returns raw text (no JSON).
+4. **Format and deliver** — `final_answer` populated by pipeline: Guards on `audit_result.verdict == "PASS"`. LLM reformats the synthesized answer — removes source attribution phrases, keeps conditions/exceptions, max 2 sentences. Post-format safety check: if the formatter introduces a negation that the audited draft did not contain, deliver the audited draft verbatim.
 
-**Output fields:** `conversation_history`, `chat_intent`, `rewritten_query`, `final_answer`
+**Output fields:** `conversation_history`, `chat_intent`, `rewritten_query`, `chat_reasoning`, `final_answer`
 
-**Failure modes:** ValueError if classify LLM returns malformed JSON (missing intent or rewritten_query). Fallback canned responses if LLM returns null response text.
+**Supporting modules:**
+- `core/session_context.py` — module-level dict, keyed by session_id. Stores stable user facts across turns. Not part of AgentState.
+- `core/data_context.py` — derives a short bullet summary of ingested sources from the manifest index at runtime. Cached; invalidated automatically when the manifest cache is cleared.
+
+**Failure modes:** ValueError from `parse_llm_json` on malformed reasoning output falls back to PLAN+original_query rather than crashing. Fallback canned responses if LLM returns an empty direct/clarifying response.
 
 ---
 
@@ -947,6 +969,8 @@ project/
 │   ├── llm_config.py        # Per-agent LLM loader (OpenAI/Ollama)
 │   ├── manifest.py          # Manifest loader, cache, formatters
 │   ├── manifest_prefilter.py # RAG pre-filter over manifest source index
+│   ├── session_context.py   # Per-session user-fact store (module-level dict)
+│   ├── data_context.py      # Runtime domain summary derived from manifest
 │   ├── registry.py          # Worker Registry (worker_type → callable)
 │   ├── retriever.py         # RetrieverInterface + ChromaRetriever
 │   ├── reranker.py          # RerankerInterface + FlashRanker + PassthroughRanker

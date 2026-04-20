@@ -3,138 +3,154 @@ agents/chat.py — Chat Agent node (The Face).
 
 LangGraph node: async chat_node(state) -> dict
 
-Handles four distinct execution paths:
+Four execution paths:
 
-  RETRY EXHAUSTION  — final_answer is empty and retry_count >= max_attempts.
-                      Returns the failure message from config.yaml. No LLM call.
+  RETRY EXHAUSTION  — final_answer empty + retry_count >= max_attempts.
+                      Returns a failure message (LLM-composed partial answer
+                      when synthesizer_output exists, else the config default).
 
-  CLASSIFY (initial entry) — final_answer is empty and retry_count < max_attempts.
-                      Calls LLM to classify intent. Schema: { intent, response }.
-                      DIRECT  → response is the answer; write to final_answer + history.
-                      CLARIFY → response is a clarifying question; write to final_answer + history.
-                      PLAN    → runs a dedicated rewrite LLM call to produce a
-                                self-contained query, then routes to Planner.
+  FAST GREETING     — obvious greetings match a regex; no LLM call.
+                      Returns a canned DIRECT response.
 
-  FORMAT AND DELIVER — final_answer is populated (set by Auditor on PASS).
-                      Calls LLM to format the answer. Runs a factual-preservation
-                      safety check: if the formatter introduced negation that the
-                      audited draft did not contain, the formatted text is
-                      discarded and the audited draft is delivered verbatim.
+  REASON AND ROUTE  — single reasoning LLM call with chain of thought
+                      (understand → assess → act). Extracts stable user
+                      facts into session_context ambiently, independent of
+                      the decision. Produces one of DIRECT, CLARIFY, or
+                      PLAN with a self-contained rewritten query.
+
+  FORMAT AND DELIVER — final_answer populated by pipeline (audit verdict
+                      PASS). LLM reformats the verified answer. Post-format
+                      safety check rejects polarity inversions.
 
 View    : original_query, conversation_history, final_answer, final_sources,
           chat_intent, rewritten_query
-Returns : { conversation_history, chat_intent, rewritten_query }          on PLAN
-          { conversation_history, chat_intent, final_answer }              on DIRECT / CLARIFY
-          { conversation_history, final_answer }                           on FORMAT or EXHAUSTION
+Returns : { conversation_history, chat_intent, rewritten_query, chat_reasoning }          on PLAN
+          { conversation_history, chat_intent, final_answer, chat_reasoning }              on DIRECT / CLARIFY
+          { conversation_history, final_answer }                                            on FORMAT or EXHAUSTION
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import re
 from pathlib import Path
 
+from core.data_context import get_data_context
 from core.llm_config import _load_config, get_llm
 from core.parse import parse_llm_json
+from core.session_context import get_session_context, update_session_context
 from core.state import AgentState, Message
 
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# Read failure message and max_attempts from config — no hardcoding
 _retry_cfg       = _load_config()["retry"]
 _FAILURE_MESSAGE: str = _retry_cfg["failure_message"]
 _MAX_ATTEMPTS:    int = _retry_cfg["max_attempts"]
 
-# Max messages sent to the classification LLM — keeps the call fast on long sessions.
-# Read from config.yaml chat.max_classification_history, default 6.
+# Reasoning call gets a generous history window — it must reconstruct intent
+# across clarification cycles and keep session facts consistent. Configurable
+# via config.yaml chat.max_reasoning_history; default 12.
 _chat_cfg = _load_config().get("chat", {})
-MAX_CLASSIFICATION_HISTORY: int = _chat_cfg.get("max_classification_history", 6)
-
-# The rewrite LLM gets a larger window — it must reconstruct intent across
-# a full clarification cycle (original question → clarification → user detail →
-# confirmation). Double the classify window by default.
-MAX_REWRITE_HISTORY: int = _chat_cfg.get("max_rewrite_history", 12)
+MAX_REASONING_HISTORY: int = _chat_cfg.get("max_reasoning_history", 12)
 
 
 # ---------------------------------------------------------------------------
-# Prompt templates — classification
+# Prompt templates — single reasoning call
 # ---------------------------------------------------------------------------
 
-_CLASSIFY_SYSTEM_PROMPT = """\
-You are a router. Your only job is to classify the user's intent so the right
-downstream agent handles it. You never solve problems, evaluate feasibility,
-or reason about what data exists.
+_REASONING_SYSTEM_PROMPT = """\
+You are the entry agent of a data-answering system. You do one thing per turn:
+reason about the user's message and produce a JSON decision that either
+answers directly, asks for clarification, or hands a self-contained query to
+the downstream pipeline.
 
-Three intents:
+Think step by step in three stages. Surface the result as structured JSON —
+not prose — exactly matching the schema at the end.
 
-DIRECT — greetings, small talk, meta questions about the system. Reply directly.
+STAGE 1 — UNDERSTAND
+  - Classify the conversation state:
+      "fresh"              — no relevant prior turn
+      "follow-up"          — user is continuing the prior topic
+      "post_clarification" — the last assistant turn was a clarification
+                              question; the user is now replying to it
+      "correction"         — user is correcting a previous statement
+  - State the user's intent in one sentence.
+  - Scan the user's message for self-identifying facts (name, department,
+    role, team, employee/user ID). If any are present, record them in
+    session_context_update using stable keys such as user_name, department,
+    role, team, user_id. Extraction is ambient — do it on every turn,
+    independent of your final decision. Corrections overwrite prior values.
 
-PLAN — anything that asks for information, facts, or analysis. This is the
-strong default. If in doubt, choose PLAN. Never judge whether a query is
-answerable — that is the Planner's job, not yours.
+STAGE 2 — ASSESS
+  - intent_type = "self_handled" if the user is only chatting, giving a
+    self-identifying fact, or asking something the system cannot answer
+    from its DATA CONTEXT (e.g. general knowledge, weather, external topics).
+  - intent_type = "information_request" if the user is asking for facts
+    from the system's data.
+  - For information_request, identify gaps that would block a self-contained
+    rewrite:
+      * unresolved self-reference ("my", "I", "mine") not covered by
+        SESSION CONTEXT
+      * unresolved pronoun ("he", "she", "they", "it") with no clear
+        referent in recent history
+      * ambiguous entity or missing scope critical to the query
+    Never judge whether the system *can* answer the question — that is the
+    downstream planner's job. Only flag gaps that prevent writing a single
+    self-contained sentence.
 
-CLARIFY — use only when the user's intent itself is unclear, or when a
-critical identifier is missing from the query and you cannot construct a
-meaningful search without it (e.g. the user asks about "my" data but has not
-provided their name, or asks to compare two things without specifying what
-they are). Ask exactly one short question. Never clarify about data sources,
-data availability, or how something might be defined in the system.
+STAGE 3 — ACT
+  - DIRECT   — self_handled. Write direct_response. Leave rewritten_query
+               and clarifying_question empty.
+  - CLARIFY  — information_request with unresolvable gaps. Write ONE short
+               clarifying_question. Do not chain clarifications — if the
+               previous turn was a clarification and the user has now
+               answered, move forward rather than asking again.
+  - PLAN     — information_request with no unresolved gaps. Write
+               rewritten_query as ONE self-contained sentence containing
+               every entity, constraint, and sub-question. The downstream
+               planner sees no conversation history, so the query must
+               stand alone.
 
-Post-clarification handling:
-If the previous assistant message was a clarification question (it ended with
-"?" and asked the user to disambiguate), treat the current user message as an
-action trigger — not a new clarification need. Confirmations ("yes", "yeah",
-"correct", "right"), corrections ("no, I meant X"), and added detail all
-classify as PLAN. Never return CLARIFY back-to-back.
+Rules that apply across stages:
+  - Post-clarification confirmations ("yes", "right", "correct") must
+    reconstruct the original concrete question using the clarified entity,
+    NEVER echo the clarification itself as the rewritten_query.
+  - If the user provides identity and asks a question in the same message,
+    emit both session_context_update and a rewritten_query with the
+    identity resolved.
+  - DATA CONTEXT is for out-of-scope detection only — never list data
+    sources to the user, and never guess whether an answer exists.
 
-Respond with ONLY a JSON object:
-{"intent": "DIRECT"|"CLARIFY"|"PLAN", "response": "your reply (required string for DIRECT/CLARIFY, null for PLAN)"}
+Respond with ONLY a JSON object in this exact shape. All fields must be
+present; use empty strings or empty arrays/objects where not applicable:
+{
+  "reasoning": {
+    "conversation_state":  "fresh|follow-up|post_clarification|correction",
+    "user_intent":         "one sentence",
+    "intent_type":         "information_request|self_handled",
+    "gaps":                [],
+    "decision_rationale":  "one sentence"
+  },
+  "decision":                "PLAN|CLARIFY|DIRECT",
+  "rewritten_query":         "",
+  "clarifying_question":     "",
+  "direct_response":         "",
+  "session_context_update":  {}
+}
 """
 
-_CLASSIFY_USER_TEMPLATE = """\
-{history_block}CURRENT QUERY:
+_REASONING_USER_TEMPLATE = """\
+{data_context_block}{session_context_block}{history_block}CURRENT USER MESSAGE:
 {original_query}
 """
 
 
 # ---------------------------------------------------------------------------
-# Prompt templates — dedicated rewrite (PLAN path only)
-# ---------------------------------------------------------------------------
-
-_REWRITE_SYSTEM_PROMPT = """\
-You are a query rewriter. Your only job is to produce a single self-contained
-question that a planner with zero conversation context can act on.
-
-You must correctly handle:
-  - Follow-ups ("and X?", "what about Y?") → carry forward the topic from the
-    last concrete question the user asked.
-  - Pronoun resolution ("his/her/their/they/them/it") → resolve to the most
-    recently named entity.
-  - Post-clarification confirmations — if the previous assistant turn was a
-    clarification question and the user replied with "yes"/"yeah"/"correct",
-    reconstruct the full intent using the clarified entity, NOT the
-    clarification question itself. If they replied with a correction
-    ("no, I meant X"), use the corrected entity.
-  - Multi-part questions → preserve every sub-question.
-  - Corrections of earlier queries → use the corrected form.
-
-If the user's current message is already fully self-contained, copy it unchanged.
-Never invent facts not present in the conversation.
-
-Respond with ONLY a JSON object:
-{"rewritten_query": "..."}
-"""
-
-_REWRITE_USER_TEMPLATE = """\
-{history_block}CURRENT USER MESSAGE:
-{original_query}
-"""
-
-
-# ---------------------------------------------------------------------------
-# Prompt templates — format and deliver
+# Prompt templates — format and deliver (unchanged)
 # ---------------------------------------------------------------------------
 
 _DELIVER_SYSTEM_PROMPT = """\
@@ -188,12 +204,13 @@ VERIFIED ANSWER (rewrite for the user):
 
 def chat_view(state: AgentState) -> dict:
     """
-    Returns only the fields the Chat Agent's LLM prompt may see.
-    Never exposes plan, task_results, audit_result, retry_count, or retry_notes.
+    Returns only the fields the Chat Agent's LLM prompts may see.
+    Never exposes plan, task_results, audit_result, retry_count, retry_notes,
+    or chat_reasoning (written by this agent — must not feed back into its
+    own prompt).
 
     rewritten_query is included so the formatter can use the self-contained
-    query (set on the PLAN path) when composing the deliver prompt — without it
-    the formatter sees only the raw user fragment and may misinterpret intent.
+    query (set on the PLAN path) when composing the deliver prompt.
     """
     return {
         "original_query":       state["original_query"],
@@ -206,7 +223,7 @@ def chat_view(state: AgentState) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Internal helpers
+# Internal helpers — prompt formatting
 # ---------------------------------------------------------------------------
 
 def _format_sources_block(final_sources: list) -> str:
@@ -221,13 +238,8 @@ def _format_sources_block(final_sources: list) -> str:
     return "\n".join(lines)
 
 
-def _format_history_block(history: list, max_messages: int = MAX_CLASSIFICATION_HISTORY) -> str:
-    """Return the last `max_messages` messages formatted for a chat LLM prompt.
-
-    Default limit matches the classify call. Pass a larger value (e.g.
-    MAX_REWRITE_HISTORY) for the rewrite call, which needs a broader window
-    to reconstruct post-clarification intent.
-    """
+def _format_history_block(history: list, max_messages: int = MAX_REASONING_HISTORY) -> str:
+    """Return the last `max_messages` messages formatted for the reasoning prompt."""
     recent = history[-max_messages:] if len(history) > max_messages else history
     if not recent:
         return ""
@@ -235,16 +247,12 @@ def _format_history_block(history: list, max_messages: int = MAX_CLASSIFICATION_
     for msg in recent:
         role = "User" if msg["role"] == "user" else "Assistant"
         lines.append(f"  {role}: {msg['content']}")
-    lines.append("")  # blank line separator
+    lines.append("")
     return "\n".join(lines) + "\n"
 
 
 def _format_recent_for_deliver(history: list, last_n: int = 2) -> str:
-    """Return the last `last_n` messages formatted for the deliver prompt.
-
-    Smaller window than classify/rewrite — the formatter only needs enough
-    conversational context to interpret terse user fragments, not full recall.
-    """
+    """Return the last `last_n` messages formatted for the deliver prompt."""
     recent = history[-last_n:] if len(history) > last_n else history
     if not recent:
         return ""
@@ -256,41 +264,24 @@ def _format_recent_for_deliver(history: list, last_n: int = 2) -> str:
     return "\n".join(lines) + "\n"
 
 
-async def _rewrite_query(history: list, original_query: str, llm) -> str:
-    """Produce a self-contained query for the Planner.
+def _format_session_context_block(ctx: dict) -> str:
+    """Render the session context dict for the reasoning prompt."""
+    if not ctx:
+        return "SESSION CONTEXT: (empty — nothing known about this user yet)\n\n"
+    lines = ["SESSION CONTEXT (stable facts from prior turns):"]
+    for k, v in ctx.items():
+        lines.append(f"  {k}: {v}")
+    lines.append("")
+    return "\n".join(lines) + "\n"
 
-    Fires on the PLAN path only. Splitting the rewrite out from classify lets
-    each call have a focused prompt and a broader history window, which
-    matters most for post-clarification confirmations where the classify call
-    would otherwise echo the clarification question itself.
 
-    Falls back to `original_query` on any parse failure so the Planner always
-    has *something* to act on.
-    """
-    history_block = _format_history_block(history, max_messages=MAX_REWRITE_HISTORY)
-    user_message  = _REWRITE_USER_TEMPLATE.format(
-        history_block=history_block,
-        original_query=original_query,
-    )
-    try:
-        response = await llm.ainvoke([
-            {"role": "system", "content": _REWRITE_SYSTEM_PROMPT},
-            {"role": "user",   "content": user_message},
-        ])
-        data = parse_llm_json(response.content)
-        rewritten = (data.get("rewritten_query") or "").strip()
-        return rewritten or original_query
-    except (ValueError, KeyError) as exc:
-        logger.warning(
-            "Rewrite call failed, falling back to original_query. Error: %s", exc
-        )
-        return original_query
+def _format_data_context_block(data_context: str) -> str:
+    if not data_context:
+        return ""
+    return f"DATA CONTEXT:\n{data_context}\n\n"
 
 
 # Negation phrases the formatter must never introduce on its own.
-# Matched case-insensitively against both the audited draft and the
-# formatted output — if the formatter added one that wasn't in the draft,
-# we reject the formatted version as an unsafe polarity inversion.
 _NEGATION_PATTERNS: tuple[str, ...] = (
     "not found",
     "no employee",
@@ -316,7 +307,6 @@ def _append_messages(
 ) -> list[Message]:
     """Return a new history list with query (and optionally answer) appended."""
     updated = list(history)
-    # Only append the user message if it's not already the last entry
     if not updated or updated[-1].get("content") != query:
         updated.append(Message(role="user", content=query))
     if answer is not None:
@@ -325,10 +315,73 @@ def _append_messages(
 
 
 # ---------------------------------------------------------------------------
-# Fast pre-classification — skip LLM for obvious greetings
+# Reasoning output helpers
 # ---------------------------------------------------------------------------
 
-import re
+_VALID_DECISIONS = {"PLAN", "CLARIFY", "DIRECT"}
+
+
+def _fallback_reasoning(original_query: str, raw: str | None = None) -> dict:
+    """Return a safe reasoning payload when parsing fails.
+
+    The Planner always gets *something*, so a malformed LLM response cannot
+    block the pipeline entirely — it degrades to a straight PLAN with the
+    user's original query.
+    """
+    if raw:
+        logger.warning("Reasoning call produced unparseable output; falling back to PLAN. Raw: %s", raw[:400])
+    return {
+        "reasoning": {
+            "conversation_state":  "fresh",
+            "user_intent":         "fallback — reasoning call failed to return parseable JSON",
+            "intent_type":         "information_request",
+            "gaps":                [],
+            "decision_rationale":  "Parse failure — default to PLAN with original query.",
+        },
+        "decision":               "PLAN",
+        "rewritten_query":        original_query,
+        "clarifying_question":    "",
+        "direct_response":        "",
+        "session_context_update": {},
+    }
+
+
+def _normalize_reasoning(data: dict, original_query: str) -> dict:
+    """Ensure the reasoning dict has every expected field with safe defaults."""
+    reasoning = data.get("reasoning") or {}
+    decision  = (data.get("decision") or "").upper().strip()
+    if decision not in _VALID_DECISIONS:
+        logger.warning("Reasoning returned invalid decision %r — coercing to PLAN", decision)
+        decision = "PLAN"
+
+    rewritten = (data.get("rewritten_query") or "").strip()
+    if decision == "PLAN" and not rewritten:
+        rewritten = original_query
+
+    return {
+        "reasoning": {
+            "conversation_state":  reasoning.get("conversation_state", "") or "",
+            "user_intent":         reasoning.get("user_intent", "") or "",
+            "intent_type":         reasoning.get("intent_type", "") or "",
+            "gaps":                reasoning.get("gaps", []) or [],
+            "decision_rationale":  reasoning.get("decision_rationale", "") or "",
+        },
+        "decision":               decision,
+        "rewritten_query":        rewritten,
+        "clarifying_question":   (data.get("clarifying_question") or "").strip(),
+        "direct_response":       (data.get("direct_response") or "").strip(),
+        "session_context_update": data.get("session_context_update") or {},
+    }
+
+
+def _serialize_reasoning(payload: dict) -> str:
+    """Render the reasoning dict as a stable JSON string for the trace."""
+    return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+# ---------------------------------------------------------------------------
+# Fast pre-classification — skip LLM for obvious greetings
+# ---------------------------------------------------------------------------
 
 _GREETING_PATTERN = re.compile(
     r"^(hi|hello|hey|thanks|thank you|bye|goodbye)[\s!.,?]*$",
@@ -367,7 +420,8 @@ async def chat_node(state: AgentState) -> dict:
     view = chat_view(state)
 
     final_answer = view["final_answer"]
-    retry_count  = state["retry_count"]  # control logic only — not passed to LLM prompt, intentional view exception
+    retry_count  = state["retry_count"]
+    session_id   = state.get("session_id", "?")
 
     # ── Path 1: RETRY EXHAUSTION ──────────────────────────────────
     if not final_answer and retry_count >= _MAX_ATTEMPTS:
@@ -397,7 +451,7 @@ async def chat_node(state: AgentState) -> dict:
             "final_answer":         answer,
         }
 
-    # ── Path 2: CLASSIFY AND ROUTE ────────────────────────────────
+    # ── Path 2: REASON AND ROUTE ──────────────────────────────────
     if not final_answer:
         # Fast path — skip LLM for obvious greetings
         fast_response = _try_fast_classify(view["original_query"])
@@ -413,42 +467,46 @@ async def chat_node(state: AgentState) -> dict:
                 "final_answer":         fast_response,
             }
 
-        history_block    = _format_history_block(view["conversation_history"])
-        classify_message = _CLASSIFY_USER_TEMPLATE.format(
+        # Build the three context blocks the reasoning prompt expects
+        data_context_block    = _format_data_context_block(get_data_context())
+        session_context_block = _format_session_context_block(get_session_context(session_id))
+        history_block         = _format_history_block(view["conversation_history"])
+
+        user_message = _REASONING_USER_TEMPLATE.format(
+            data_context_block=data_context_block,
+            session_context_block=session_context_block,
             history_block=history_block,
             original_query=view["original_query"],
         )
 
         llm      = get_llm("chat")
         response = await llm.ainvoke([
-            {"role": "system", "content": _CLASSIFY_SYSTEM_PROMPT},
-            {"role": "user",   "content": classify_message},
+            {"role": "system", "content": _REASONING_SYSTEM_PROMPT},
+            {"role": "user",   "content": user_message},
         ])
 
-        data = parse_llm_json(response.content)
         try:
-            intent        = data["intent"]
-            response_text = data.get("response")
-        except KeyError as exc:
-            raise ValueError(
-                f"Missing key in classify LLM output: {exc}\nRaw output: {response.content}"
-            ) from exc
+            data = parse_llm_json(response.content)
+            payload = _normalize_reasoning(data, view["original_query"])
+        except ValueError as exc:
+            logger.warning("[%s] reasoning parse failed: %s", session_id, exc)
+            payload = _fallback_reasoning(view["original_query"], raw=str(response.content))
 
-        # PLAN — run a dedicated rewrite call, then hand off to the Planner.
-        # The rewrite is split out from classify so each prompt stays focused
-        # and the rewrite gets a larger history window (critical for
-        # post-clarification confirmations like "yes").
-        if intent == "PLAN":
-            rewritten_query = await _rewrite_query(
-                view["conversation_history"],
-                view["original_query"],
-                llm,
-            )
-            logger.debug(
-                "[%s] Chat classify — intent=PLAN rewritten_query=%s",
-                state.get("session_id", "?"),
-                rewritten_query,
-            )
+        # Ambient: apply session_context_update on every path, independent of decision.
+        context_update = payload.get("session_context_update") or {}
+        if context_update:
+            update_session_context(session_id, context_update)
+
+        chat_reasoning_json = _serialize_reasoning(payload)
+        decision = payload["decision"]
+
+        logger.debug(
+            "[%s] Chat reasoning — decision=%s update_keys=%s",
+            session_id, decision, list(context_update.keys()),
+        )
+
+        if decision == "PLAN":
+            rewritten = payload["rewritten_query"] or view["original_query"]
             updated_history = _append_messages(
                 view["conversation_history"],
                 view["original_query"],
@@ -456,27 +514,15 @@ async def chat_node(state: AgentState) -> dict:
             return {
                 "conversation_history": updated_history,
                 "chat_intent":          "PLAN",
-                "rewritten_query":      rewritten_query,
+                "rewritten_query":      rewritten,
+                "chat_reasoning":       chat_reasoning_json,
             }
 
-        logger.debug(
-            "[%s] Chat classify — intent=%s (no rewrite needed)",
-            state.get("session_id", "?"),
-            intent,
-        )
+        if decision == "CLARIFY":
+            response_text = payload["clarifying_question"] or "Could you rephrase your question?"
+        else:  # DIRECT
+            response_text = payload["direct_response"] or "Hello! Ask me anything about your company data."
 
-        # DIRECT or CLARIFY — the response is ready immediately
-        if response_text is None:
-            logger.warning(
-                "LLM returned intent=%r with null response — using fallback. Raw: %s",
-                intent, response.content,
-            )
-            if intent == "DIRECT":
-                response_text = "Hello! Ask me anything about your company data."
-            else:  # CLARIFY
-                response_text = "Could you rephrase your question?"
-
-        response_text = response_text.strip()
         updated_history = _append_messages(
             view["conversation_history"],
             view["original_query"],
@@ -484,14 +530,12 @@ async def chat_node(state: AgentState) -> dict:
         )
         return {
             "conversation_history": updated_history,
-            "chat_intent":          intent,
+            "chat_intent":          decision,
             "final_answer":         response_text,
+            "chat_reasoning":       chat_reasoning_json,
         }
 
     # ── Path 3: FORMAT AND DELIVER ────────────────────────────────
-    # Only format if the Auditor explicitly approved (verdict == PASS).
-    # final_answer is only written to state by the Auditor on PASS —
-    # this guard prevents delivering un-audited content.
     audit = state.get("audit_result") or {}
     if audit.get("verdict") != "PASS":
         logger.warning(
@@ -510,9 +554,9 @@ async def chat_node(state: AgentState) -> dict:
         }
 
     # Feed the formatter the self-contained query (rewritten_query) plus a small
-    # window of recent history. Without this, terse follow-ups like "and noa
-    # levi?" reach the formatter as raw fragments, and the LLM may invert
-    # polarity trying to reconcile the fragment with a concrete answer.
+    # window of recent history. Without this, terse follow-ups reach the
+    # formatter as raw fragments and the LLM may invert polarity trying to
+    # reconcile the fragment with a concrete answer.
     resolved_query = view["rewritten_query"] or view["original_query"]
     history_block  = _format_recent_for_deliver(view["conversation_history"], last_n=2)
 
@@ -530,15 +574,13 @@ async def chat_node(state: AgentState) -> dict:
 
     formatted_answer = response.content.strip()
 
-    # Factual-preservation safety check. The audited draft (final_answer) was
-    # approved by the Auditor, so falling back to it is always safe. We only
-    # override when the formatter introduced a negation the draft did not have.
+    # Factual-preservation safety check — reject formatter polarity inversions.
     if _contains_negation(formatted_answer) and not _contains_negation(final_answer):
         logger.warning(
             "[%s] Formatter introduced negation absent from audited draft — "
             "rejecting formatted output and delivering the audited draft verbatim. "
             "Draft: %r Formatted: %r",
-            state.get("session_id", "?"),
+            session_id,
             final_answer,
             formatted_answer,
         )
@@ -561,12 +603,14 @@ async def chat_node(state: AgentState) -> dict:
 # ---------------------------------------------------------------------------
 
 def test_chat():
-    import json
     from unittest.mock import AsyncMock, MagicMock, patch
 
+    from core.session_context import clear_session_context
     from tests.fixtures import CHAT_AGENT_STATE
 
-    patch_target = f"{__name__}.get_llm"
+    patch_target        = f"{__name__}.get_llm"
+    data_ctx_patch      = f"{__name__}.get_data_context"
+    fake_data_context   = "The system contains the following data:\n- Example Source (record): description"
 
     # ── Shared minimal state skeleton ────────────────────────────
     base_state: AgentState = {
@@ -575,8 +619,10 @@ def test_chat():
         "conversation_history": [],
         "chat_intent":          "",
         "rewritten_query":      "",
+        "chat_reasoning":       "",
         "plan":                 [],
         "manifest_context":     "",
+        "planner_reasoning":    "",
         "task_results":         {},
         "sources_used":         [],
         "retrieved_chunks":     [],
@@ -585,9 +631,58 @@ def test_chat():
         "audit_result":         {"verdict": "PASS", "notes": ""},
         "retry_count":          0,
         "retry_notes":          "",
+        "retry_history":        [],
         "final_answer":         "",
         "final_sources":        [],
     }
+
+    def _reasoning_payload(
+        decision,
+        rewritten_query="",
+        direct_response="",
+        clarifying_question="",
+        session_context_update=None,
+        conversation_state="fresh",
+        user_intent="",
+        intent_type=None,
+        gaps=None,
+    ):
+        import json as _json
+        return _json.dumps({
+            "reasoning": {
+                "conversation_state": conversation_state,
+                "user_intent":        user_intent or f"user requested {decision.lower()}",
+                "intent_type":        intent_type or (
+                    "self_handled" if decision == "DIRECT" else "information_request"
+                ),
+                "gaps":               gaps or [],
+                "decision_rationale": f"selected {decision}",
+            },
+            "decision":               decision,
+            "rewritten_query":        rewritten_query,
+            "clarifying_question":    clarifying_question,
+            "direct_response":        direct_response,
+            "session_context_update": session_context_update or {},
+        })
+
+    def _mock_llm(json_str: str) -> MagicMock:
+        resp = MagicMock()
+        resp.content = json_str
+        llm = MagicMock()
+        llm.ainvoke = AsyncMock(return_value=resp)
+        return llm
+
+    # Every reasoning-path test runs with data_context mocked — otherwise the
+    # module tries to load the real manifest on disk.
+    def _run(state: dict, llm, sid: str = "test-session-001") -> dict:
+        state = {**state, "session_id": sid}
+        with patch(data_ctx_patch, return_value=fake_data_context), \
+             patch(patch_target, return_value=llm):
+            return asyncio.run(chat_node(state))
+
+    # Ensure a clean session_context between tests
+    def _reset_sid(sid: str = "test-session-001") -> None:
+        clear_session_context(sid)
 
     # ── Test 1: chat_view exposes only the permitted fields ───────
     view = chat_view(CHAT_AGENT_STATE)
@@ -595,81 +690,50 @@ def test_chat():
         "original_query", "conversation_history", "final_answer", "final_sources",
         "chat_intent", "rewritten_query",
     }
-    assert "plan"             not in view
-    assert "task_results"     not in view
-    assert "audit_result"     not in view
-    assert "retry_count"      not in view
-    assert "retry_notes"      not in view
-    assert "synthesizer_output" not in view
-    # rewritten_query is intentionally exposed so the formatter can use the
-    # self-contained query; all other internal pipeline fields remain hidden.
-    assert view["rewritten_query"] == CHAT_AGENT_STATE.get("rewritten_query", "")
-    print("PASS: chat_view returns correct fields and excludes all forbidden ones")
+    for forbidden in ("plan", "task_results", "audit_result", "retry_count",
+                      "retry_notes", "synthesizer_output", "chat_reasoning"):
+        assert forbidden not in view, f"chat_view leaked {forbidden}"
+    print("PASS: chat_view exposes only permitted fields; hides chat_reasoning from its own prompt")
 
-    # ── Test 2: DIRECT intent — LLM responds immediately, final_answer set ──
-    direct_response = "Hello! I'm a multi-agent RAG assistant. Ask me anything about your company data."
-    direct_json = json.dumps({
-        "intent":   "DIRECT",
-        "response": direct_response,
-    })
-    mock_resp_direct = MagicMock()
-    mock_resp_direct.content = direct_json
-    mock_llm_direct = MagicMock()
-    mock_llm_direct.ainvoke = AsyncMock(return_value=mock_resp_direct)
+    # ── Test 2: DIRECT — LLM answers immediately, no pipeline ─────
+    _reset_sid()
+    direct_response = "I can help with questions about your company data. What would you like to know?"
+    direct_json = _reasoning_payload("DIRECT", direct_response=direct_response)
 
-    direct_state = {**base_state, "original_query": "Hi there"}
-    with patch(patch_target, return_value=mock_llm_direct):
-        result_direct = asyncio.run(chat_node(direct_state))
+    direct_state = {**base_state, "original_query": "What can you do?"}
+    result_direct = _run(direct_state, _mock_llm(direct_json))
 
     assert result_direct["chat_intent"]   == "DIRECT"
     assert result_direct["final_answer"]  == direct_response
-    assert "conversation_history"        in result_direct
-    history_direct = result_direct["conversation_history"]
-    assert history_direct[-2]["role"]    == "user"
-    assert history_direct[-1]["role"]    == "assistant"
-    assert history_direct[-1]["content"] == direct_response
+    assert "chat_reasoning" in result_direct, "DIRECT must write chat_reasoning"
     assert "rewritten_query" not in result_direct, "DIRECT must not write rewritten_query"
-    # DIRECT must only invoke the classify LLM — no rewrite call
-    assert mock_llm_direct.ainvoke.call_count == 1, \
-        f"DIRECT must make exactly one LLM call, got {mock_llm_direct.ainvoke.call_count}"
-    print("PASS: DIRECT intent calls LLM, sets final_answer, appends both turns to history")
+    hist = result_direct["conversation_history"]
+    assert hist[-1] == {"role": "assistant", "content": direct_response}
+    print("PASS: DIRECT writes final_answer + chat_reasoning; no rewritten_query")
 
-    # ── Test 3: CLARIFY intent — clarifying question returned as final_answer ──
-    clarify_response = "Could you clarify — which Noa are you referring to?"
-    clarify_json = json.dumps({
-        "intent":   "CLARIFY",
-        "response": clarify_response,
-    })
-    mock_resp_clarify = MagicMock()
-    mock_resp_clarify.content = clarify_json
-    mock_llm_clarify = MagicMock()
-    mock_llm_clarify.ainvoke = AsyncMock(return_value=mock_resp_clarify)
+    # ── Test 3: CLARIFY ───────────────────────────────────────────
+    _reset_sid()
+    clar_question = "Which Noa do you mean — Noa Levi or Noa Levy?"
+    clar_json = _reasoning_payload(
+        "CLARIFY",
+        clarifying_question=clar_question,
+        gaps=["ambiguous entity 'Noa'"],
+    )
+    result_clar = _run({**base_state, "original_query": "Can Noa fly Business Class?"},
+                       _mock_llm(clar_json))
+    assert result_clar["chat_intent"]  == "CLARIFY"
+    assert result_clar["final_answer"] == clar_question
+    assert "chat_reasoning" in result_clar
+    print("PASS: CLARIFY returns clarifying_question as final_answer")
 
-    clarify_state = {**base_state, "original_query": "Can Noa fly Business Class?"}
-    with patch(patch_target, return_value=mock_llm_clarify):
-        result_clarify = asyncio.run(chat_node(clarify_state))
-
-    assert result_clarify["chat_intent"]  == "CLARIFY"
-    assert result_clarify["final_answer"] == clarify_response
-    history_clarify = result_clarify["conversation_history"]
-    assert history_clarify[-1]["role"]    == "assistant"
-    assert history_clarify[-1]["content"] == clarify_response
-    assert mock_llm_clarify.ainvoke.call_count == 1, \
-        f"CLARIFY must make exactly one LLM call, got {mock_llm_clarify.ainvoke.call_count}"
-    print("PASS: CLARIFY intent calls LLM, sets final_answer to clarifying question")
-
-    # ── Test 4: PLAN intent — classify + dedicated rewrite LLM call ──
-    # PLAN now requires two sequential LLM calls: first classify returns the
-    # intent, then a dedicated rewrite call produces the self-contained query.
+    # ── Test 4: PLAN — sets rewritten_query, no final_answer ──────
+    _reset_sid()
     rewritten = "What is Dan Cohen's flight class entitlement?"
-    classify_plan_json = json.dumps({"intent": "PLAN", "response": None})
-    rewrite_plan_json  = json.dumps({"rewritten_query": rewritten})
-
-    mock_resp_classify = MagicMock(); mock_resp_classify.content = classify_plan_json
-    mock_resp_rewrite  = MagicMock(); mock_resp_rewrite.content  = rewrite_plan_json
-    mock_llm_plan = MagicMock()
-    mock_llm_plan.ainvoke = AsyncMock(side_effect=[mock_resp_classify, mock_resp_rewrite])
-
+    plan_json = _reasoning_payload(
+        "PLAN",
+        rewritten_query=rewritten,
+        conversation_state="follow-up",
+    )
     plan_state = {
         **base_state,
         "original_query": "What about Dan?",
@@ -678,467 +742,226 @@ def test_chat():
             {"role": "assistant", "content": "Yes, Noa holds clearance level A."},
         ],
     }
-    with patch(patch_target, return_value=mock_llm_plan):
-        result_plan = asyncio.run(chat_node(plan_state))
-
+    result_plan = _run(plan_state, _mock_llm(plan_json))
     assert result_plan["chat_intent"]     == "PLAN"
     assert result_plan["rewritten_query"] == rewritten
+    assert "chat_reasoning" in result_plan
     assert "final_answer" not in result_plan, "PLAN must not set final_answer"
-    assert "conversation_history" in result_plan
-    history_plan = result_plan["conversation_history"]
-    assert history_plan[-1]["role"]    == "user"
-    assert history_plan[-1]["content"] == "What about Dan?"
-    assert mock_llm_plan.ainvoke.call_count == 2, \
-        f"PLAN must make two LLM calls (classify + rewrite), got {mock_llm_plan.ainvoke.call_count}"
-    print("PASS: PLAN intent fires classify + rewrite, writes rewritten_query, no final_answer")
+    print("PASS: PLAN writes rewritten_query + chat_reasoning, leaves final_answer empty")
 
-    # ── Test 5: PLAN with empty history — rewrite returns original unchanged ──
-    classify_only_json = json.dumps({"intent": "PLAN", "response": None})
-    rewrite_same_json  = json.dumps({"rewritten_query": "Can Noa fly Business Class?"})
-    mock_resp_c = MagicMock(); mock_resp_c.content = classify_only_json
-    mock_resp_r = MagicMock(); mock_resp_r.content = rewrite_same_json
-    mock_llm_no_rewrite = MagicMock()
-    mock_llm_no_rewrite.ainvoke = AsyncMock(side_effect=[mock_resp_c, mock_resp_r])
+    # ── Test 5: reasoning parse failure falls back to PLAN ────────
+    _reset_sid()
+    bad_resp = MagicMock(); bad_resp.content = "not valid json at all"
+    bad_llm  = MagicMock(); bad_llm.ainvoke = AsyncMock(return_value=bad_resp)
+    result_bad = _run(base_state, bad_llm)
+    assert result_bad["chat_intent"]     == "PLAN"
+    assert result_bad["rewritten_query"] == base_state["original_query"]
+    assert "chat_reasoning" in result_bad
+    print("PASS: reasoning parse failure falls back to PLAN with original_query")
 
-    with patch(patch_target, return_value=mock_llm_no_rewrite):
-        result_no_rewrite = asyncio.run(chat_node(base_state))
-
-    assert result_no_rewrite["rewritten_query"] == base_state["original_query"]
-    print("PASS: PLAN with no history passes original query through unchanged")
-
-    # ── Test 5b: rewrite call parse failure falls back to original_query ──
-    # If the rewrite LLM returns invalid JSON, the Planner must still get a
-    # usable query (the original) instead of blocking the pipeline.
-    classify_fallback_json = json.dumps({"intent": "PLAN", "response": None})
-    mock_resp_cf = MagicMock(); mock_resp_cf.content = classify_fallback_json
-    mock_resp_bad = MagicMock(); mock_resp_bad.content = "not valid json at all"
-    mock_llm_fallback = MagicMock()
-    mock_llm_fallback.ainvoke = AsyncMock(side_effect=[mock_resp_cf, mock_resp_bad])
-
-    with patch(patch_target, return_value=mock_llm_fallback):
-        result_fallback = asyncio.run(chat_node(base_state))
-
-    assert result_fallback["rewritten_query"] == base_state["original_query"], \
-        "Rewrite parse failure must fall back to original_query"
-    print("PASS: rewrite call parse failure falls back to original_query")
-
-    # ── Test 6: FORMAT AND DELIVER — LLM rewrites the synthesizer answer ──
-    # The formatted response must differ meaningfully from the synthesizer output.
-    # CHAT_AGENT_STATE.final_answer (synthesizer output) is:
-    #   "Yes. Noa holds clearance level A, which entitles her to Business Class on flights over 4 hours."
-    # The chat agent should rewrite it — shorter, no source attribution, lead with key fact.
-    synthesizer_answer = CHAT_AGENT_STATE["final_answer"]
-    formatted = "Noa has clearance level A and is entitled to Business Class on flights over 4 hours."
-    mock_resp_deliver = MagicMock()
-    mock_resp_deliver.content = f"  {formatted}  "   # intentional whitespace to test .strip()
-    mock_llm_deliver  = MagicMock()
-
-    captured_deliver: list = []
-
-    async def capture_deliver(messages):
-        captured_deliver.extend(messages)
-        return mock_resp_deliver
-
-    mock_llm_deliver.ainvoke = capture_deliver
-
-    # Use a rewritten_query that differs from original_query so we can verify
-    # the formatter receives the resolved (rewritten) form.
-    deliver_state = {
-        **CHAT_AGENT_STATE,
-        "rewritten_query": "Can Noa fly Business Class based on her clearance level?",
-        "audit_result":    {"verdict": "PASS", "notes": "All verified."},
-    }
-    with patch(patch_target, return_value=mock_llm_deliver):
-        result_deliver = asyncio.run(chat_node(deliver_state))
-
-    assert set(result_deliver.keys()) == {"conversation_history", "final_answer"}
-    assert result_deliver["final_answer"] == formatted   # stripped
-    assert result_deliver["final_answer"] != synthesizer_answer, \
-        "Formatted answer must differ from the synthesizer output"
-    history_deliver = result_deliver["conversation_history"]
-    assert history_deliver[-1]["role"]    == "assistant"
-    assert history_deliver[-1]["content"] == formatted
-
-    # Confirm key prompt directives are present in the delivery system prompt
-    system_msg = next(m["content"] for m in captured_deliver if m["role"] == "system")
-    assert "copyeditor" in system_msg.lower(), \
-        "Delivery system prompt must cast the LLM as a copyeditor"
-    assert "never invert polarity" in system_msg.lower(), \
-        "Delivery system prompt must forbid polarity inversion"
-    assert "remove source attribution" in system_msg.lower(), \
-        "Delivery system prompt must instruct the LLM to remove source attribution"
-    assert "lead with the key fact" in system_msg.lower(), \
-        "Delivery system prompt must instruct the LLM to lead with the key fact"
-    # User template must NOT include sources block — sources are shown separately in the UI
-    user_msg = next(m["content"] for m in captured_deliver if m["role"] == "user")
-    assert "SOURCES:" not in user_msg, \
-        "Deliver user template must not include sources block — sources are shown in the UI"
-    # The formatter must receive the rewritten (resolved) query, not the raw original
-    assert "Can Noa fly Business Class based on her clearance level?" in user_msg, \
-        "Deliver user template must include the rewritten_query as the resolved question"
-    # Prior conversation context should reach the formatter
-    assert "RECENT CONVERSATION" in user_msg, \
-        "Deliver user template must include a RECENT CONVERSATION block"
-    print("PASS: FORMAT AND DELIVER uses rewritten_query + history; copyeditor constraint in prompt")
-
-    # ── Test 6b: FORMAT AND DELIVER preserves conditions from synthesizer output ──
-    # The synthesizer output contains a conditional rule. The Chat Agent must
-    # preserve the condition in the formatted answer — not drop it for brevity.
-    conditional_synth = (
-        "Employees with clearance level C are entitled to Economy class on all flights. "
-        "Business Class is permitted on flights exceeding 8 hours with prior manager approval."
+    # ── Test 6: session_context_update persists across turns ──────
+    _reset_sid()
+    id_json = _reasoning_payload(
+        "DIRECT",
+        direct_response="Nice to meet you, Dan. Ask me anything about your data.",
+        intent_type="self_handled",
+        session_context_update={"user_name": "Dan", "department": "Engineering"},
     )
-    conditional_formatted = (
-        "Clearance C employees fly Economy, but Business Class is permitted on "
-        "flights over 8 hours with prior manager approval."
+    _run({**base_state, "original_query": "my name is Dan, I'm in Engineering"}, _mock_llm(id_json))
+    ctx_after = get_session_context("test-session-001")
+    assert ctx_after.get("user_name")  == "Dan"
+    assert ctx_after.get("department") == "Engineering"
+    print("PASS: identity-only message persists user_name + department in session_context")
+
+    # ── Test 6b: session_context correction overwrites on next turn ──
+    correction_json = _reasoning_payload(
+        "DIRECT",
+        direct_response="Got it, Noa.",
+        intent_type="self_handled",
+        session_context_update={"user_name": "Noa"},
+        conversation_state="correction",
     )
-    mock_resp_cond = MagicMock()
-    mock_resp_cond.content = conditional_formatted
-    mock_llm_cond = MagicMock()
-    mock_llm_cond.ainvoke = AsyncMock(return_value=mock_resp_cond)
+    _run({**base_state, "original_query": "actually I'm Noa, not Dan"}, _mock_llm(correction_json))
+    ctx_corrected = get_session_context("test-session-001")
+    assert ctx_corrected.get("user_name")  == "Noa",         "correction must overwrite user_name"
+    assert ctx_corrected.get("department") == "Engineering", "unchanged keys must survive"
+    print("PASS: session_context correction overwrites the collision key")
 
-    cond_state = {
-        **base_state,
-        "final_answer":  conditional_synth,
-        "final_sources": [{"source_id": "travel_policy_2024", "source_type": "pdf", "label": "Travel Policy 2024"}],
-        "audit_result":  {"verdict": "PASS", "notes": "Verified."},
-    }
-    with patch(patch_target, return_value=mock_llm_cond):
-        result_cond = asyncio.run(chat_node(cond_state))
-
-    assert result_cond["final_answer"] == conditional_formatted
-    # The condition "8 hours" and "manager approval" must survive formatting
-    assert "8 hours" in result_cond["final_answer"], \
-        "Formatted answer must preserve the flight-duration threshold"
-    assert "manager approval" in result_cond["final_answer"], \
-        "Formatted answer must preserve the approval requirement"
-    # Verify the prompt instructs preservation of conditions
-    assert "never drop conditions" in _DELIVER_SYSTEM_PROMPT.lower(), \
-        "Deliver prompt must instruct LLM to never drop conditions"
-    print("PASS: FORMAT AND DELIVER preserves conditional rules (thresholds + approval requirements)")
-
-    # ── Test 7a: RETRY EXHAUSTION — no synthesizer_output → hardcoded failure, no LLM call ──
-    mock_llm_exhaust = MagicMock()
-    mock_llm_exhaust.ainvoke = AsyncMock()
-    exhausted_state = {**base_state, "retry_count": _MAX_ATTEMPTS, "synthesizer_output": ""}
-
-    with patch(patch_target, return_value=mock_llm_exhaust):
-        result_exhausted = asyncio.run(chat_node(exhausted_state))
-
+    # ── Test 7a: retry exhaustion, no synthesizer → failure message, no LLM ──
+    _reset_sid()
+    mock_llm_exhaust = MagicMock(); mock_llm_exhaust.ainvoke = AsyncMock()
+    exh_state = {**base_state, "retry_count": _MAX_ATTEMPTS, "synthesizer_output": ""}
+    result_exh = _run(exh_state, mock_llm_exhaust)
     mock_llm_exhaust.ainvoke.assert_not_called()
-    assert result_exhausted["final_answer"] == _FAILURE_MESSAGE
-    assert result_exhausted["conversation_history"][-1]["content"] == _FAILURE_MESSAGE
-    assert result_exhausted["conversation_history"][-1]["role"]    == "assistant"
-    print(f"PASS: retry exhaustion (no synthesizer output) returns hardcoded failure, no LLM call")
+    assert result_exh["final_answer"] == _FAILURE_MESSAGE
+    print("PASS: exhaustion without synthesizer_output returns _FAILURE_MESSAGE, no LLM call")
 
-    # ── Test 7b: RETRY EXHAUSTION — with synthesizer_output → LLM call with partial findings ──
-    partial_answer = "I could not fully verify, but Noa appears to hold clearance level A."
-    mock_resp_exhaust = MagicMock()
-    mock_resp_exhaust.content = f"  {partial_answer}  "
-    mock_llm_exhaust_with = MagicMock()
-    mock_llm_exhaust_with.ainvoke = AsyncMock(return_value=mock_resp_exhaust)
-
-    captured_exhaust: list = []
-    async def capture_exhaust(messages):
-        captured_exhaust.extend(messages)
-        return mock_resp_exhaust
-    mock_llm_exhaust_with.ainvoke = capture_exhaust
-
-    exhausted_with_output = {
-        **base_state,
-        "retry_count":        _MAX_ATTEMPTS,
-        "synthesizer_output": "Noa holds clearance level A based on employee records.",
-    }
-    with patch(patch_target, return_value=mock_llm_exhaust_with):
-        result_exhaust_llm = asyncio.run(chat_node(exhausted_with_output))
-
-    assert result_exhaust_llm["final_answer"] == partial_answer, \
-        f"Expected LLM-generated answer, got: {result_exhaust_llm['final_answer']!r}"
-    assert result_exhaust_llm["final_answer"] != _FAILURE_MESSAGE, \
-        "When synthesizer_output exists, must NOT return the hardcoded failure message"
-    assert result_exhaust_llm["conversation_history"][-1]["content"] == partial_answer
-    assert result_exhaust_llm["conversation_history"][-1]["role"]    == "assistant"
-    # Verify the prompt included synthesizer_output
-    system_msg = next(m["content"] for m in captured_exhaust if m["role"] == "system")
-    assert "Noa holds clearance level A" in system_msg, \
-        "Exhaustion prompt must include the synthesizer_output"
-    assert "could not fully verify" in system_msg.lower(), \
-        "Exhaustion prompt must mention verification failure"
-    print(f"PASS: retry exhaustion (with synthesizer output) calls LLM and returns partial answer")
-
-    # ── Test 8: initial entry does not duplicate existing user message ──
-    no_dup_json = json.dumps({
-        "intent":          "PLAN",
-        "rewritten_query": "Can Noa fly Business Class?",
-        "response":        None,
-    })
-    mock_resp_no_dup = MagicMock()
-    mock_resp_no_dup.content = no_dup_json
-    mock_llm_no_dup = MagicMock()
-    mock_llm_no_dup.ainvoke = AsyncMock(return_value=mock_resp_no_dup)
-
-    state_with_history = {
-        **base_state,
-        "conversation_history": [
-            {"role": "user", "content": "Can Noa fly Business Class?"}
-        ],
-    }
-    with patch(patch_target, return_value=mock_llm_no_dup):
-        result_no_dup = asyncio.run(chat_node(state_with_history))
-
-    user_messages = [
-        m for m in result_no_dup["conversation_history"] if m["role"] == "user"
-    ]
-    assert len(user_messages) == 1, "User message must not be duplicated in history"
-    print("PASS: initial entry does not duplicate an existing user message in history")
-
-    # ── Test 9: history_block includes last N messages in classify prompt ──
-    long_history = [
-        {"role": "user",      "content": f"question {i}"}
-        for i in range(10)
-    ]
-    block = _format_history_block(long_history)
-    # Should contain the last MAX_CLASSIFICATION_HISTORY entries, not the first ones
-    assert "question 9"  in block
-    assert "question 4"  in block
-    assert "question 3" not in block   # older than MAX_CLASSIFICATION_HISTORY ago
-    print(f"PASS: _format_history_block includes last {MAX_CLASSIFICATION_HISTORY} messages only")
-
-    # ── Test 9b: classify + rewrite each receive their own truncated history ──
-    # Build a state with 20 messages (10 turns). Classify should see the last 6;
-    # rewrite should see the last 12. Both windows are validated independently.
-    big_history = []
-    for i in range(10):
-        big_history.append({"role": "user",      "content": f"user-msg-{i}"})
-        big_history.append({"role": "assistant",  "content": f"asst-msg-{i}"})
-
-    classify_truncate_json = json.dumps({"intent": "PLAN", "response": None})
-    rewrite_truncate_json  = json.dumps({"rewritten_query": "What is the answer?"})
-    mock_resp_classify_t = MagicMock(); mock_resp_classify_t.content = classify_truncate_json
-    mock_resp_rewrite_t  = MagicMock(); mock_resp_rewrite_t.content  = rewrite_truncate_json
-
-    # Capture each call's messages separately so we can assert windows independently.
-    captured_calls: list[list] = []
-    responses_iter = iter([mock_resp_classify_t, mock_resp_rewrite_t])
-
-    async def capture_each_call(messages):
-        captured_calls.append(list(messages))
-        return next(responses_iter)
-
-    mock_llm_trunc = MagicMock()
-    mock_llm_trunc.ainvoke = capture_each_call
-
-    trunc_state = {
-        **base_state,
-        "original_query": "What is the answer?",
-        "conversation_history": big_history,
-    }
-    with patch(patch_target, return_value=mock_llm_trunc):
-        asyncio.run(chat_node(trunc_state))
-
-    assert len(captured_calls) == 2, \
-        f"PLAN must issue classify + rewrite (2 calls); got {len(captured_calls)}"
-
-    # Call 1 (classify): only last MAX_CLASSIFICATION_HISTORY=6 messages
-    classify_user_msg = next(m["content"] for m in captured_calls[0] if m["role"] == "user")
-    assert "user-msg-0" not in classify_user_msg, \
-        "Classify must not send old history (user-msg-0)"
-    assert "user-msg-6" not in classify_user_msg, \
-        "Classify must not send user-msg-6 (outside last 6)"
-    assert "user-msg-7" in classify_user_msg, "Classify must include user-msg-7"
-    assert "asst-msg-9" in classify_user_msg, "Classify must include most recent asst-msg-9"
-
-    # Call 2 (rewrite): last MAX_REWRITE_HISTORY=12 messages — wider window
-    rewrite_user_msg = next(m["content"] for m in captured_calls[1] if m["role"] == "user")
-    assert "user-msg-0" not in rewrite_user_msg, \
-        "Rewrite must not send oldest history (user-msg-0) when 20 messages exist"
-    # Rewrite window is 12 → should include user-msg-4 (message index 8, within last 12)
-    assert "user-msg-4" in rewrite_user_msg, \
-        "Rewrite must include user-msg-4 (inside last 12 messages)"
-    assert "asst-msg-9" in rewrite_user_msg, \
-        "Rewrite must include most recent asst-msg-9"
-
-    assert len(trunc_state["conversation_history"]) == 20, \
-        "Full conversation_history must not be mutated"
-    print(
-        f"PASS: classify receives last {MAX_CLASSIFICATION_HISTORY} messages, "
-        f"rewrite receives last {MAX_REWRITE_HISTORY} messages"
-    )
-
-    # ── Test 10: fast pre-classification skips LLM for greetings ──
-    mock_llm_fast = MagicMock()
-    mock_llm_fast.ainvoke = AsyncMock()
-
-    for greeting in ("hi", "hello", "thanks", "Hey!", "bye"):
-        fast_state = {**base_state, "original_query": greeting}
-        with patch(patch_target, return_value=mock_llm_fast):
-            result_fast = asyncio.run(chat_node(fast_state))
-
-        assert result_fast["chat_intent"] == "DIRECT", \
-            f"'{greeting}' must classify as DIRECT, got {result_fast['chat_intent']!r}"
-        assert result_fast["final_answer"], \
-            f"'{greeting}' must produce a non-empty final_answer"
-        assert result_fast["conversation_history"][-1]["role"] == "assistant"
-    mock_llm_fast.ainvoke.assert_not_called()
-    print("PASS: fast pre-classification returns DIRECT for greetings without any LLM call")
-
-    # ── Test 11: messages longer than threshold still go to LLM ──
-    long_msg = "What is Noa's clearance level?"
-    assert _try_fast_classify(long_msg) is None, \
-        "Messages longer than threshold must not be fast-classified"
-    assert _try_fast_classify("find employees") is None, \
-        "Non-greeting short messages must not be fast-classified"
-    print("PASS: non-greeting and long messages are not fast-classified")
-
-    # ── Test 12: exhaustion with synthesizer_output — unverified, audit FAIL ──
-    # Simulates: auditor rejected 3 times (retry_count == max), synthesizer had output,
-    # but final_answer is empty (auditor never set it on PASS).
-    # The chat agent must produce an honest partial answer, NOT the hardcoded failure.
-    exhaust_partial = "I was unable to fully verify, but records suggest Noa has clearance A."
-    mock_resp_exhaust_v = MagicMock()
-    mock_resp_exhaust_v.content = f"  {exhaust_partial}  "
-    mock_llm_exhaust_v = MagicMock()
-    mock_llm_exhaust_v.ainvoke = AsyncMock(return_value=mock_resp_exhaust_v)
-
-    exhausted_fail_state = {
+    # ── Test 7b: retry exhaustion with synthesizer_output → LLM composes partial ──
+    _reset_sid()
+    partial = "I could not fully verify, but records suggest Noa has clearance A."
+    partial_resp = MagicMock(); partial_resp.content = f"  {partial}  "
+    partial_llm  = MagicMock(); partial_llm.ainvoke = AsyncMock(return_value=partial_resp)
+    exh_state2 = {
         **base_state,
         "retry_count":        _MAX_ATTEMPTS,
         "synthesizer_output": "Noa holds clearance level A per the employees table.",
-        "audit_result":       {"verdict": "FAIL", "notes": "Draft lacked source citation."},
-        "final_answer":       "",   # auditor never set it — never passed
     }
+    result_exh2 = _run(exh_state2, partial_llm)
+    assert result_exh2["final_answer"] == partial
+    print("PASS: exhaustion with synthesizer_output calls LLM and returns partial answer")
 
-    with patch(patch_target, return_value=mock_llm_exhaust_v):
-        result_exhaust_v = asyncio.run(chat_node(exhausted_fail_state))
+    # ── Test 8: fast greeting — no LLM call ───────────────────────
+    _reset_sid()
+    fast_llm = MagicMock(); fast_llm.ainvoke = AsyncMock()
+    for greeting in ("hi", "hello", "Hey!", "thanks", "bye"):
+        result_fast = _run({**base_state, "original_query": greeting}, fast_llm)
+        assert result_fast["chat_intent"]  == "DIRECT"
+        assert result_fast["final_answer"]
+        assert "chat_reasoning" not in result_fast, "fast path should not emit reasoning"
+    fast_llm.ainvoke.assert_not_called()
+    print("PASS: fast greeting path returns DIRECT without any LLM call")
 
-    assert result_exhaust_v["final_answer"] == exhaust_partial, \
-        f"Expected LLM-generated partial answer, got: {result_exhaust_v['final_answer']!r}"
-    assert result_exhaust_v["final_answer"] != _FAILURE_MESSAGE, \
-        "Must NOT return the hardcoded failure message when synthesizer_output exists"
-    # The audit verdict in state must still be FAIL (chat_node does not change it)
-    assert exhausted_fail_state["audit_result"]["verdict"] == "FAIL", \
-        "audit_result must remain FAIL — the chat agent must not flip it"
-    assert "audit_result" not in result_exhaust_v, \
-        "Exhaustion path must not write audit_result — it stays FAIL from the auditor"
-    print("PASS: exhaustion with synthesizer_output returns unverified partial answer, audit stays FAIL")
+    # ── Test 9: delivery path ─ audit PASS ─── uses rewritten_query + recent history ──
+    _reset_sid()
+    audited_draft = "Yes. Noa holds clearance level A, which entitles her to Business Class on flights over 4 hours."
+    formatted     = "Noa has clearance level A and is entitled to Business Class on flights over 4 hours."
+    deliver_resp  = MagicMock(); deliver_resp.content = f"  {formatted}  "
+    captured: list = []
+    async def capture(messages):
+        captured.extend(messages)
+        return deliver_resp
+    deliver_llm = MagicMock(); deliver_llm.ainvoke = capture
 
-    # ── Test 13: delivery path rejects if audit verdict is not PASS ──
-    # final_answer is set but audit verdict is FAIL — should NOT format and deliver
-    mock_llm_no_deliver = MagicMock()
-    mock_llm_no_deliver.ainvoke = AsyncMock()
+    deliver_state = {
+        **base_state,
+        "original_query":   "Can she fly Business?",
+        "rewritten_query":  "Can Noa fly Business Class?",
+        "conversation_history": [
+            {"role": "user",      "content": "Who is Noa?"},
+            {"role": "assistant", "content": "Noa is a senior engineer."},
+        ],
+        "final_answer":    audited_draft,
+        "audit_result":    {"verdict": "PASS", "notes": "Verified."},
+    }
+    result_deliver = _run(deliver_state, deliver_llm)
+    assert set(result_deliver.keys()) == {"conversation_history", "final_answer"}
+    assert result_deliver["final_answer"] == formatted
+    system_msg = next(m["content"] for m in captured if m["role"] == "system")
+    user_msg   = next(m["content"] for m in captured if m["role"] == "user")
+    assert "copyeditor" in system_msg.lower()
+    assert "never invert polarity" in system_msg.lower()
+    # Formatter must use rewritten_query, not original_query
+    assert "Can Noa fly Business Class?" in user_msg
+    assert "RECENT CONVERSATION" in user_msg
+    print("PASS: delivery uses rewritten_query + recent history; copyeditor constraints present")
 
-    bad_audit_state = {
+    # ── Test 10: formatter polarity safety check ─────────────────
+    _reset_sid()
+    positive_draft = "Noa Levi's salary is in the $85,000 - $110,000 range based on the employees table."
+    inverted       = "There is no employee named Noa Levi in the system."
+    inv_resp = MagicMock(); inv_resp.content = inverted
+    inv_llm  = MagicMock(); inv_llm.ainvoke = AsyncMock(return_value=inv_resp)
+    inv_state = {
+        **base_state,
+        "final_answer":    positive_draft,
+        "audit_result":    {"verdict": "PASS", "notes": "Verified."},
+        "rewritten_query": "What is Noa Levi's salary?",
+    }
+    result_inv = _run(inv_state, inv_llm)
+    assert result_inv["final_answer"] == positive_draft, \
+        "Safety check must revert to audited draft on polarity inversion"
+    print("PASS: formatter polarity inversion triggers safety check")
+
+    # Legitimate negation (draft already negates) → formatted output accepted
+    negative_draft     = "No employee named Noa Levie was found in the records."
+    negative_formatted = "There is no employee named Noa Levie."
+    neg_resp = MagicMock(); neg_resp.content = negative_formatted
+    neg_llm  = MagicMock(); neg_llm.ainvoke = AsyncMock(return_value=neg_resp)
+    neg_state = {
+        **base_state,
+        "final_answer":    negative_draft,
+        "audit_result":    {"verdict": "PASS", "notes": ""},
+        "rewritten_query": "What is Noa Levie's salary?",
+    }
+    result_neg = _run(neg_state, neg_llm)
+    assert result_neg["final_answer"] == negative_formatted
+    print("PASS: legitimate negation in audited draft delivers formatted output")
+
+    # ── Test 11: delivery rejects when audit verdict != PASS ─────
+    _reset_sid()
+    no_llm = MagicMock(); no_llm.ainvoke = AsyncMock()
+    bad_state = {
         **base_state,
         "final_answer":  "Some answer that should not be delivered.",
         "audit_result":  {"verdict": "FAIL", "notes": "Rejected."},
-        "retry_count":   0,
     }
+    result_bad_audit = _run(bad_state, no_llm)
+    no_llm.ainvoke.assert_not_called()
+    assert result_bad_audit["final_answer"] == _FAILURE_MESSAGE
+    print("PASS: delivery with non-PASS audit returns _FAILURE_MESSAGE, no LLM call")
 
-    with patch(patch_target, return_value=mock_llm_no_deliver):
-        result_bad_audit = asyncio.run(chat_node(bad_audit_state))
+    # ── Test 12: reasoning prompt receives data_context + session_context + history ──
+    _reset_sid()
+    seen_user_msg: list = []
+    seen_resp = MagicMock()
+    seen_resp.content = _reasoning_payload("PLAN", rewritten_query="What is X?")
+    async def capture_seen(messages):
+        seen_user_msg.extend(messages)
+        return seen_resp
+    seen_llm = MagicMock(); seen_llm.ainvoke = capture_seen
 
-    mock_llm_no_deliver.ainvoke.assert_not_called()
-    assert result_bad_audit["final_answer"] == _FAILURE_MESSAGE, \
-        "Delivery with non-PASS audit must return the hardcoded failure message"
-    print("PASS: delivery path rejects when audit verdict is not PASS")
+    # Pre-populate session context
+    update_session_context("test-session-001", {"user_name": "Taylor"})
 
-    # ── Test 14: multi-question message rewrites all questions ──────
-    # Classify returns PLAN; the dedicated rewrite call produces the full
-    # 3-part rewritten query with pronouns resolved.
-    multi_q_rewritten = (
-        "What is Dan Cohen's clearance level? "
-        "What is Dan Cohen's salary range? "
-        "Can Dan Cohen fly Business Class?"
-    )
-    mock_resp_multi_classify = MagicMock()
-    mock_resp_multi_classify.content = json.dumps({"intent": "PLAN", "response": None})
-    mock_resp_multi_rewrite  = MagicMock()
-    mock_resp_multi_rewrite.content  = json.dumps({"rewritten_query": multi_q_rewritten})
-    mock_llm_multi = MagicMock()
-    mock_llm_multi.ainvoke = AsyncMock(
-        side_effect=[mock_resp_multi_classify, mock_resp_multi_rewrite]
-    )
-
-    multi_state = {
+    seen_state = {
         **base_state,
-        "original_query": "What is his clearance level? What is his salary? Can he fly Business?",
-        "conversation_history": [
-            {"role": "user",      "content": "Tell me about Dan Cohen"},
-            {"role": "assistant", "content": "Dan Cohen is in the Finance department with clearance B."},
-        ],
+        "original_query": "what is X?",
+        "conversation_history": [{"role": "user", "content": "earlier message"}],
     }
-    with patch(patch_target, return_value=mock_llm_multi):
-        result_multi = asyncio.run(chat_node(multi_state))
+    _run(seen_state, seen_llm)
+    user_prompt = next(m["content"] for m in seen_user_msg if m["role"] == "user")
+    assert "DATA CONTEXT:"                in user_prompt, "reasoning prompt must include DATA CONTEXT block"
+    assert fake_data_context.splitlines()[0] in user_prompt, "data_context content must reach the prompt"
+    assert "SESSION CONTEXT"              in user_prompt, "reasoning prompt must include SESSION CONTEXT block"
+    assert "Taylor"                        in user_prompt, "SESSION CONTEXT must carry prior user_name"
+    assert "CONVERSATION HISTORY"         in user_prompt, "reasoning prompt must include history"
+    assert "CURRENT USER MESSAGE"         in user_prompt
+    print("PASS: reasoning prompt includes data_context + session_context + history blocks")
 
-    rq = result_multi["rewritten_query"]
-    assert "clearance" in rq.lower(), \
-        f"Rewritten query must include the clearance question, got: {rq}"
-    assert "salary" in rq.lower(), \
-        f"Rewritten query must include the salary question, got: {rq}"
-    assert "business" in rq.lower() or "fly" in rq.lower(), \
-        f"Rewritten query must include the flight question, got: {rq}"
-    assert "Dan Cohen" in rq, \
-        f"Rewritten query must resolve 'his' to 'Dan Cohen', got: {rq}"
-    print("PASS: multi-question message rewrites all 3 questions with resolved context")
+    # ── Test 13: history truncation — last MAX_REASONING_HISTORY entries only ──
+    _reset_sid()
+    big_history = []
+    for i in range(20):
+        big_history.append({"role": "user",      "content": f"user-msg-{i}"})
+        big_history.append({"role": "assistant", "content": f"asst-msg-{i}"})  # 40 messages total
 
-    # ── Test 15: classify prompt contains post-clarification PLAN guidance ──
-    # The classifier must route confirmations after a clarification question
-    # to PLAN, not loop back to CLARIFY. We verify two things: (a) the prompt
-    # itself contains the post-clarification rule, and (b) when the mock
-    # returns PLAN, the path is taken as PLAN (not re-clarified).
-    assert "post-clarification" in _CLASSIFY_SYSTEM_PROMPT.lower(), \
-        "Classify prompt must mention post-clarification handling"
-    assert "never return clarify back-to-back" in _CLASSIFY_SYSTEM_PROMPT.lower(), \
-        "Classify prompt must forbid back-to-back CLARIFY responses"
+    cap_user: list = []
+    trunc_resp = MagicMock()
+    trunc_resp.content = _reasoning_payload("PLAN", rewritten_query="What?")
+    async def cap_trunc(messages):
+        cap_user.extend(messages)
+        return trunc_resp
+    trunc_llm = MagicMock(); trunc_llm.ainvoke = cap_trunc
 
-    post_clar_classify_json = json.dumps({"intent": "PLAN", "response": None})
-    post_clar_rewrite_json  = json.dumps({
-        "rewritten_query": "What is the salary range for Noa Levy?"
-    })
-    mock_resp_pc_c = MagicMock(); mock_resp_pc_c.content = post_clar_classify_json
-    mock_resp_pc_r = MagicMock(); mock_resp_pc_r.content = post_clar_rewrite_json
-    mock_llm_post_clar = MagicMock()
-    mock_llm_post_clar.ainvoke = AsyncMock(side_effect=[mock_resp_pc_c, mock_resp_pc_r])
+    _run({**base_state, "conversation_history": big_history, "original_query": "What?"}, trunc_llm)
+    user_prompt = next(m["content"] for m in cap_user if m["role"] == "user")
+    # MAX_REASONING_HISTORY = 12 → last 12 messages. We had 40 → last 12 are
+    # user-msg-14, asst-msg-14, user-msg-15, ..., asst-msg-19. So user-msg-0
+    # must NOT appear, but asst-msg-19 MUST.
+    assert "user-msg-0"   not in user_prompt
+    assert "user-msg-13"  not in user_prompt
+    assert "user-msg-14"  in user_prompt
+    assert "asst-msg-19"  in user_prompt
+    print(f"PASS: reasoning call truncates history to last {MAX_REASONING_HISTORY} messages")
 
-    post_clar_state = {
-        **base_state,
-        "original_query": "yes",
-        "conversation_history": [
-            {"role": "user",      "content": "maybe noa levy"},
-            {"role": "assistant", "content": "Did you mean Noa Levy (not Levi)?"},
-        ],
-    }
-    with patch(patch_target, return_value=mock_llm_post_clar):
-        result_pc = asyncio.run(chat_node(post_clar_state))
-
-    assert result_pc["chat_intent"] == "PLAN", \
-        f"'yes' after a clarification must route as PLAN, got {result_pc['chat_intent']!r}"
-    assert "Noa Levy" in result_pc["rewritten_query"], \
-        f"Rewritten query must name Noa Levy, got: {result_pc['rewritten_query']!r}"
-    print("PASS: post-clarification 'yes' routes as PLAN, rewrite reconstructs intent")
-
-    # ── Test 16: rewrite call sees enough history to reconstruct intent ──
-    # Build a state where the last assistant turn is a clarification and the
-    # user replied "yes". Capture the rewrite call's user message and assert
-    # it contains both the clarification question and the user's earlier
-    # concrete question about salary.
-    captured_rewrite: list = []
-    rewrite_capture_json = json.dumps({
-        "rewritten_query": "What is the salary range for Noa Levy?"
-    })
-    mock_resp_rw_classify = MagicMock()
-    mock_resp_rw_classify.content = json.dumps({"intent": "PLAN", "response": None})
-    mock_resp_rw = MagicMock(); mock_resp_rw.content = rewrite_capture_json
-
-    _rw_iter = iter([mock_resp_rw_classify, mock_resp_rw])
-    async def capture_rewrite_call(messages):
-        captured_rewrite.append(list(messages))
-        return next(_rw_iter)
-
-    mock_llm_rewrite = MagicMock()
-    mock_llm_rewrite.ainvoke = capture_rewrite_call
-
-    rewrite_state = {
+    # ── Test 14: post-clarification "yes" → PLAN rewrites full intent ──
+    _reset_sid()
+    yes_json = _reasoning_payload(
+        "PLAN",
+        rewritten_query="What is the salary range for Noa Levy?",
+        conversation_state="post_clarification",
+    )
+    yes_state = {
         **base_state,
         "original_query": "yes",
         "conversation_history": [
@@ -1148,197 +971,50 @@ def test_chat():
             {"role": "assistant", "content": "Did you mean Noa Levy (not Levi)?"},
         ],
     }
-    with patch(patch_target, return_value=mock_llm_rewrite):
-        result_rw = asyncio.run(chat_node(rewrite_state))
+    result_yes = _run(yes_state, _mock_llm(yes_json))
+    assert result_yes["chat_intent"] == "PLAN"
+    assert "Noa Levy" in result_yes["rewritten_query"]
+    assert "salary"   in result_yes["rewritten_query"].lower()
+    print("PASS: post-clarification 'yes' routes as PLAN with reconstructed intent")
 
-    assert len(captured_rewrite) == 2, \
-        f"Expected classify + rewrite (2 calls), got {len(captured_rewrite)}"
-
-    # Inspect the rewrite call's user message (second call)
-    rewrite_user_msg   = next(m["content"] for m in captured_rewrite[1] if m["role"] == "user")
-    rewrite_system_msg = next(m["content"] for m in captured_rewrite[1] if m["role"] == "system")
-
-    assert "salary range for Noa Levi" in rewrite_user_msg, \
-        "Rewrite call must see the user's original salary question in history"
-    assert "Did you mean Noa Levy" in rewrite_user_msg, \
-        "Rewrite call must see the clarification question in history"
-    assert "CURRENT USER MESSAGE" in rewrite_user_msg and "yes" in rewrite_user_msg, \
-        "Rewrite call must include the current 'yes' message"
-    # The rewrite system prompt must teach the post-clarification behavior
-    assert "post-clarification" in rewrite_system_msg.lower(), \
-        "Rewrite system prompt must teach post-clarification reconstruction"
-
-    assert "Noa Levy" in result_rw["rewritten_query"], \
-        f"Rewritten query must contain 'Noa Levy', got: {result_rw['rewritten_query']!r}"
-    assert "salary" in result_rw["rewritten_query"].lower(), \
-        f"Rewritten query must preserve the salary topic, got: {result_rw['rewritten_query']!r}"
-    print("PASS: rewrite call reconstructs intent from clarification confirmation with history")
-
-    # ── Test 17: formatter factual-preservation safety check ──
-    # (a) formatter inverts polarity — audited draft has no negation but
-    #     formatted output does → safety check must override with draft.
-    audited_positive_draft = (
-        "Noa Levi's salary is in the $85,000 - $110,000 range per year, "
-        "based on the employees table."
+    # ── Test 15: identity + question in one message → PLAN + context update ──
+    _reset_sid()
+    combo_json = _reasoning_payload(
+        "PLAN",
+        rewritten_query="What is Dan's (Engineering) salary?",
+        session_context_update={"user_name": "Dan", "department": "Engineering"},
     )
-    inverted_formatted = "There is no employee named Noa Levi in the system."
-    mock_resp_invert = MagicMock(); mock_resp_invert.content = inverted_formatted
-    mock_llm_invert = MagicMock()
-    mock_llm_invert.ainvoke = AsyncMock(return_value=mock_resp_invert)
+    combo_state = {**base_state, "original_query": "I'm Dan from Engineering, what's my salary?"}
+    result_combo = _run(combo_state, _mock_llm(combo_json))
+    assert result_combo["chat_intent"]     == "PLAN"
+    assert result_combo["rewritten_query"] == "What is Dan's (Engineering) salary?"
+    ctx = get_session_context("test-session-001")
+    assert ctx["user_name"]  == "Dan"
+    assert ctx["department"] == "Engineering"
+    print("PASS: identity + question emits PLAN + session_context_update together")
 
-    invert_state = {
-        **base_state,
-        "final_answer":    audited_positive_draft,
-        "final_sources":   [{"source_id": "employees", "source_type": "csv", "label": "Employees"}],
-        "audit_result":    {"verdict": "PASS", "notes": "Verified."},
-        "rewritten_query": "What is the salary range for Noa Levi?",
-    }
-    with patch(patch_target, return_value=mock_llm_invert):
-        result_invert = asyncio.run(chat_node(invert_state))
-
-    assert result_invert["final_answer"] == audited_positive_draft, \
-        f"Safety check must revert to the audited draft when the formatter "\
-        f"introduces negation. Got: {result_invert['final_answer']!r}"
-    # History must record the audited draft, not the inverted formatted output
-    assert result_invert["conversation_history"][-1]["content"] == audited_positive_draft
-    print("PASS: formatter polarity inversion triggers safety check, audited draft delivered")
-
-    # (b) both draft and formatted contain legitimate negation → accept formatted
-    negative_draft = "No employee named Noa Levie was found in the records."
-    negative_formatted = "There is no employee named Noa Levie."
-    mock_resp_neg = MagicMock(); mock_resp_neg.content = negative_formatted
-    mock_llm_neg = MagicMock()
-    mock_llm_neg.ainvoke = AsyncMock(return_value=mock_resp_neg)
-
-    neg_state = {
-        **base_state,
-        "final_answer":    negative_draft,
-        "audit_result":    {"verdict": "PASS", "notes": "Verified."},
-        "rewritten_query": "What is the salary range for Noa Levie?",
-    }
-    with patch(patch_target, return_value=mock_llm_neg):
-        result_neg = asyncio.run(chat_node(neg_state))
-
-    assert result_neg["final_answer"] == negative_formatted, \
-        "When the audited draft already contains negation, the formatter's "\
-        "negated output is legitimate and must be delivered."
-    print("PASS: formatter legitimate negation (matches audited draft) is delivered unchanged")
-
-    # (c) neither draft nor formatted contains negation → formatted delivered
+    # ── Test 16: delivery preserves chat_reasoning set on prior turn ──
+    # Delivery path returns only {conversation_history, final_answer}, not
+    # chat_reasoning. chat_reasoning is a snapshot of the entry-turn decision
+    # and must not be overwritten by the delivery path on a retry loop.
+    _reset_sid()
     plain_draft     = "Dan Cohen earns $95,000 annually based on the employees table."
     plain_formatted = "Dan Cohen makes $95,000 per year."
-    mock_resp_plain = MagicMock(); mock_resp_plain.content = plain_formatted
-    mock_llm_plain = MagicMock()
-    mock_llm_plain.ainvoke = AsyncMock(return_value=mock_resp_plain)
-
+    plain_resp = MagicMock(); plain_resp.content = plain_formatted
+    plain_llm  = MagicMock(); plain_llm.ainvoke = AsyncMock(return_value=plain_resp)
     plain_state = {
         **base_state,
+        "chat_reasoning":  '{"previous": "reasoning"}',
         "final_answer":    plain_draft,
         "audit_result":    {"verdict": "PASS", "notes": "Verified."},
         "rewritten_query": "What is Dan Cohen's salary?",
     }
-    with patch(patch_target, return_value=mock_llm_plain):
-        result_plain = asyncio.run(chat_node(plain_state))
+    result_plain = _run(plain_state, plain_llm)
+    assert "chat_reasoning" not in result_plain, \
+        "delivery path must not overwrite chat_reasoning"
+    print("PASS: delivery path returns only {conversation_history, final_answer}")
 
-    assert result_plain["final_answer"] == plain_formatted, \
-        "When neither draft nor formatted has negation, formatted must be delivered."
-    print("PASS: formatter non-negation rewrite is delivered unchanged")
-
-    # ── Test 18: 4-turn regression from the original trace ──
-    # Simulates: Dan Cohen salary → follow-up "and noa levi?" → ambiguous
-    # "maybe noa levy" → confirmation "yes". The critical assertion is that
-    # turn 4's rewritten_query names Noa Levy and salary, and is NOT the
-    # clarification question echoed back.
-    class _Seq:
-        def __init__(self, responses):
-            self._it = iter(responses)
-        async def ainvoke(self, messages):
-            resp = MagicMock()
-            resp.content = next(self._it)
-            return resp
-
-    # Turn 1 — "What is the salary range for Dan Cohen?"
-    t1_rewritten = "What is the salary range for Dan Cohen?"
-    turn1_mock = _Seq([
-        json.dumps({"intent": "PLAN", "response": None}),                # classify
-        json.dumps({"rewritten_query": t1_rewritten}),                   # rewrite
-    ])
-    turn1_state = {
-        **base_state,
-        "original_query":       "What is the salary range for Dan Cohen?",
-        "conversation_history": [],
-    }
-    with patch(patch_target, return_value=turn1_mock):
-        r1 = asyncio.run(chat_node(turn1_state))
-    assert r1["chat_intent"] == "PLAN"
-    assert "Dan Cohen" in r1["rewritten_query"]
-
-    # Turn 2 — "and noa levi?" — must rewrite to the full salary question
-    t2_rewritten = "What is the salary range for Noa Levi?"
-    turn2_mock = _Seq([
-        json.dumps({"intent": "PLAN", "response": None}),
-        json.dumps({"rewritten_query": t2_rewritten}),
-    ])
-    turn2_history = r1["conversation_history"] + [
-        {"role": "assistant", "content": "Dan Cohen's salary range is $90,000 - $110,000."},
-    ]
-    turn2_state = {
-        **base_state,
-        "original_query":       "and noa levi?",
-        "conversation_history": turn2_history,
-    }
-    with patch(patch_target, return_value=turn2_mock):
-        r2 = asyncio.run(chat_node(turn2_state))
-    assert r2["chat_intent"] == "PLAN"
-    assert "Noa Levi" in r2["rewritten_query"], \
-        f"Turn 2 must rewrite 'and noa levi?' into a full question about Noa Levi, "\
-        f"got: {r2['rewritten_query']!r}"
-    assert "salary" in r2["rewritten_query"].lower()
-
-    # Turn 3 — "maybe noa levy" — CLARIFY is acceptable (ambiguous)
-    t3_clar = "Did you mean Noa Levy (not Levi)?"
-    turn3_mock = _Seq([
-        json.dumps({"intent": "CLARIFY", "response": t3_clar}),
-    ])
-    turn3_history = r2["conversation_history"] + [
-        {"role": "assistant", "content": "I could not find an employee named Noa Levi."},
-    ]
-    turn3_state = {
-        **base_state,
-        "original_query":       "maybe noa levy",
-        "conversation_history": turn3_history,
-    }
-    with patch(patch_target, return_value=turn3_mock):
-        r3 = asyncio.run(chat_node(turn3_state))
-    assert r3["chat_intent"] in ("CLARIFY", "PLAN"), \
-        f"Turn 3 may classify as CLARIFY or PLAN, got {r3['chat_intent']!r}"
-
-    # Turn 4 — "yes" — MUST route as PLAN and reconstruct "salary range for Noa Levy"
-    # NEVER echo the clarification question itself as the rewritten query.
-    t4_rewritten = "What is the salary range for Noa Levy?"
-    turn4_mock = _Seq([
-        json.dumps({"intent": "PLAN", "response": None}),
-        json.dumps({"rewritten_query": t4_rewritten}),
-    ])
-    turn4_history = r3["conversation_history"]   # already contains the clarification
-    turn4_state = {
-        **base_state,
-        "original_query":       "yes",
-        "conversation_history": turn4_history,
-    }
-    with patch(patch_target, return_value=turn4_mock):
-        r4 = asyncio.run(chat_node(turn4_state))
-    assert r4["chat_intent"] == "PLAN", \
-        f"Turn 4 'yes' must route as PLAN, got {r4['chat_intent']!r}"
-    rq4 = r4["rewritten_query"]
-    assert "Noa Levy" in rq4, \
-        f"Turn 4 rewritten query must name 'Noa Levy', got: {rq4!r}"
-    assert "salary" in rq4.lower(), \
-        f"Turn 4 rewritten query must preserve the salary topic, got: {rq4!r}"
-    assert rq4 != t3_clar, \
-        f"Turn 4 rewrite must NOT echo the clarification question, got: {rq4!r}"
-    print("PASS: 4-turn regression — turn-4 'yes' reconstructs full Noa Levy salary intent")
-
+    _reset_sid()
     print("\nPASS: all chat tests passed")
 
 
