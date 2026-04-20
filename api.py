@@ -36,7 +36,7 @@ from core.retriever import ChromaRetriever
 from core.session_context import get_session_context
 from core.state import AgentState, Message, SourceRef
 from graph import compiled_graph
-from ingestion.manifest_writer import delete_source_from_manifest
+from ingestion.manifest_writer import delete_source_from_manifest, regenerate_data_context
 from ingestion.pdf_ingestor import ingest_pdf
 from ingestion.table_ingestor import ingest_table
 
@@ -240,11 +240,13 @@ def get_sources():
 
 
 @app.delete("/sources/{source_id}")
-def delete_source(source_id: str):
+async def delete_source(source_id: str):
     try:
         delete_source_from_manifest(source_id)
     except ValueError as exc:
         return JSONResponse(status_code=404, content=ErrorResponse(error=str(exc)).model_dump())
+
+    await regenerate_data_context()
 
     # ChromaDB collection only exists for PDF sources; silently skip if absent
     chromadb_removed = False
@@ -661,6 +663,7 @@ def test_api():
     mock_chroma_client.delete_collection = MagicMock()
 
     with patch(f"{__name__}.delete_source_from_manifest") as mock_del, \
+         patch(f"{__name__}.regenerate_data_context", new=AsyncMock(return_value="ok")) as mock_regen, \
          patch(f"{__name__}.ChromaRetriever") as mock_cr:
         mock_cr.return_value._client = mock_chroma_client
         resp = client.delete("/sources/travel_policy_2024")
@@ -670,6 +673,7 @@ def test_api():
     assert body["deleted"]                    == "travel_policy_2024"
     assert body["chromadb_collection_removed"] is True
     mock_del.assert_called_once_with("travel_policy_2024")
+    mock_regen.assert_awaited_once()
     mock_chroma_client.delete_collection.assert_called_once_with("travel_policy_2024")
     print(f"PASS: DELETE /sources/travel_policy_2024 returns correct shape: {body}")
 
@@ -692,6 +696,7 @@ def test_api():
     )
 
     with patch(f"{__name__}.delete_source_from_manifest"), \
+         patch(f"{__name__}.regenerate_data_context", new=AsyncMock(return_value="ok")), \
          patch(f"{__name__}.ChromaRetriever") as mock_cr2:
         mock_cr2.return_value._client = mock_chroma_client_no_coll
         resp = client.delete("/sources/employees")

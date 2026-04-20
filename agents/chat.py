@@ -72,56 +72,51 @@ Think step by step in three stages. Surface the result as structured JSON —
 not prose — exactly matching the schema at the end.
 
 STAGE 1 — UNDERSTAND
-  - Classify the conversation state:
-      "fresh"              — no relevant prior turn
-      "follow-up"          — user is continuing the prior topic
-      "post_clarification" — the last assistant turn was a clarification
-                              question; the user is now replying to it
-      "correction"         — user is correcting a previous statement
   - State the user's intent in one sentence.
-  - Scan the user's message for self-identifying facts (name, department,
-    role, team, employee/user ID). If any are present, record them in
-    session_context_update using stable keys such as user_name, department,
-    role, team, user_id. Extraction is ambient — do it on every turn,
+  - Scan the user's message for self-identifying facts. If any are present, you need to record them in
+    session_context_update using stable keys. Extraction is ambient — do it on every turn,
     independent of your final decision. Corrections overwrite prior values.
 
 STAGE 2 — ASSESS
-  - intent_type = "self_handled" if the user is only chatting, giving a
-    self-identifying fact, or asking something the system cannot answer
-    from its DATA CONTEXT (e.g. general knowledge, weather, external topics).
-  - intent_type = "information_request" if the user is asking for facts
-    from the system's data.
-  - For information_request, identify gaps that would block a self-contained
-    rewrite:
+  - Decide whether the user is asking for facts from the system's data, or
+    doing something else (chatting, greeting, giving a self-identifying fact,
+    providing information without asking a question, or asking something
+    outside the DATA CONTEXT).
+  - If the user is asking for data, identify gaps that would block a
+    self-contained rewrite:
       * unresolved self-reference ("my", "I", "mine") not covered by
         SESSION CONTEXT
       * unresolved pronoun ("he", "she", "they", "it") with no clear
         referent in recent history
-      * ambiguous entity or missing scope critical to the query
+      * ambiguous entity critical to the query
     Never judge whether the system *can* answer the question — that is the
     downstream planner's job. Only flag gaps that prevent writing a single
     self-contained sentence.
 
 STAGE 3 — ACT
-  - DIRECT   — self_handled. Write direct_response. Leave rewritten_query
-               and clarifying_question empty.
-  - CLARIFY  — information_request with unresolvable gaps. Write ONE short
+  - DIRECT   — anything other than a data lookup: greetings, identity
+               statements, out-of-scope questions, providing information
+               without asking a data question, conversational responses.
+               Write direct_response. Leave rewritten_query and
+               clarifying_question empty.
+  - CLARIFY  — a data question with unresolvable gaps. Write ONE short
                clarifying_question. Do not chain clarifications — if the
                previous turn was a clarification and the user has now
                answered, move forward rather than asking again.
-  - PLAN     — information_request with no unresolved gaps. Write
-               rewritten_query as ONE self-contained sentence containing
-               every entity, constraint, and sub-question. The downstream
-               planner sees no conversation history, so the query must
-               stand alone.
+  - PLAN     — a data question with no unresolved gaps. Write rewritten_query
+               as ONE self-contained question a person would naturally ask,
+               including every entity and constraint needed to answer it.
+               Do NOT reference sources, tables, records, files, or
+               documents. Do NOT use procedural language such as "retrieve",
+               "provide", "lookup", "if available", or "otherwise indicate".
+               Phrase it as a question a user would type, not an instruction
+               to a system. The downstream planner sees no conversation
+               history, so the question must stand alone.
 
 Rules that apply across stages:
   - Post-clarification confirmations ("yes", "right", "correct") must
     reconstruct the original concrete question using the clarified entity,
     NEVER echo the clarification itself as the rewritten_query.
-  - If the user provides identity and asks a question in the same message,
-    emit both session_context_update and a rewritten_query with the
-    identity resolved.
   - DATA CONTEXT is for out-of-scope detection only — never list data
     sources to the user, and never guess whether an answer exists.
 
@@ -129,9 +124,7 @@ Respond with ONLY a JSON object in this exact shape. All fields must be
 present; use empty strings or empty arrays/objects where not applicable:
 {
   "reasoning": {
-    "conversation_state":  "fresh|follow-up|post_clarification|correction",
     "user_intent":         "one sentence",
-    "intent_type":         "information_request|self_handled",
     "gaps":                [],
     "decision_rationale":  "one sentence"
   },
@@ -177,12 +170,9 @@ Rules:
     answer contains a rule with an exception such as "permitted only when X" or
     "requires approval for Y", always include that exception in the final answer.
   - Do not add information not in the answer. Never add advice, suggestions, or
-    recommendations not directly stated in the answer — do not say "consult your
-    department" or "contact the finance team" unless the source explicitly says so.
-  - Never refer to source documents by name in the formatted answer — the UI shows
-    sources separately. Do not say "as specified in the Travel Policy 2024" or
-    "according to the HR Handbook".
-  - Do not reveal internal system details (plans, retries, task IDs, worker names).
+    recommendations not directly stated in the answer.
+  - Never refer to source documents by name in the formatted answer.
+  - Do not reveal internal system details.
   - Do not hedge or add uncertainty.
   - If the answer explains that data was not found, tell the user clearly and
     specifically what was not found — for example: "There is no [entity type]
@@ -332,9 +322,7 @@ def _fallback_reasoning(original_query: str, raw: str | None = None) -> dict:
         logger.warning("Reasoning call produced unparseable output; falling back to PLAN. Raw: %s", raw[:400])
     return {
         "reasoning": {
-            "conversation_state":  "fresh",
             "user_intent":         "fallback — reasoning call failed to return parseable JSON",
-            "intent_type":         "information_request",
             "gaps":                [],
             "decision_rationale":  "Parse failure — default to PLAN with original query.",
         },
@@ -360,9 +348,7 @@ def _normalize_reasoning(data: dict, original_query: str) -> dict:
 
     return {
         "reasoning": {
-            "conversation_state":  reasoning.get("conversation_state", "") or "",
             "user_intent":         reasoning.get("user_intent", "") or "",
-            "intent_type":         reasoning.get("intent_type", "") or "",
             "gaps":                reasoning.get("gaps", []) or [],
             "decision_rationale":  reasoning.get("decision_rationale", "") or "",
         },
@@ -642,19 +628,13 @@ def test_chat():
         direct_response="",
         clarifying_question="",
         session_context_update=None,
-        conversation_state="fresh",
         user_intent="",
-        intent_type=None,
         gaps=None,
     ):
         import json as _json
         return _json.dumps({
             "reasoning": {
-                "conversation_state": conversation_state,
                 "user_intent":        user_intent or f"user requested {decision.lower()}",
-                "intent_type":        intent_type or (
-                    "self_handled" if decision == "DIRECT" else "information_request"
-                ),
                 "gaps":               gaps or [],
                 "decision_rationale": f"selected {decision}",
             },
@@ -732,7 +712,6 @@ def test_chat():
     plan_json = _reasoning_payload(
         "PLAN",
         rewritten_query=rewritten,
-        conversation_state="follow-up",
     )
     plan_state = {
         **base_state,
@@ -764,7 +743,6 @@ def test_chat():
     id_json = _reasoning_payload(
         "DIRECT",
         direct_response="Nice to meet you, Dan. Ask me anything about your data.",
-        intent_type="self_handled",
         session_context_update={"user_name": "Dan", "department": "Engineering"},
     )
     _run({**base_state, "original_query": "my name is Dan, I'm in Engineering"}, _mock_llm(id_json))
@@ -777,9 +755,7 @@ def test_chat():
     correction_json = _reasoning_payload(
         "DIRECT",
         direct_response="Got it, Noa.",
-        intent_type="self_handled",
         session_context_update={"user_name": "Noa"},
-        conversation_state="correction",
     )
     _run({**base_state, "original_query": "actually I'm Noa, not Dan"}, _mock_llm(correction_json))
     ctx_corrected = get_session_context("test-session-001")
@@ -920,13 +896,18 @@ def test_chat():
     }
     _run(seen_state, seen_llm)
     user_prompt = next(m["content"] for m in seen_user_msg if m["role"] == "user")
+    system_prompt = next(m["content"] for m in seen_user_msg if m["role"] == "system")
     assert "DATA CONTEXT:"                in user_prompt, "reasoning prompt must include DATA CONTEXT block"
     assert fake_data_context.splitlines()[0] in user_prompt, "data_context content must reach the prompt"
     assert "SESSION CONTEXT"              in user_prompt, "reasoning prompt must include SESSION CONTEXT block"
     assert "Taylor"                        in user_prompt, "SESSION CONTEXT must carry prior user_name"
     assert "CONVERSATION HISTORY"         in user_prompt, "reasoning prompt must include history"
     assert "CURRENT USER MESSAGE"         in user_prompt
-    print("PASS: reasoning prompt includes data_context + session_context + history blocks")
+    # System prompt must not carry the removed classification vocabulary.
+    for removed in ("conversation_state", "intent_type", '"fresh"', "post_clarification"):
+        assert removed not in system_prompt, \
+            f"reasoning system prompt still references removed token {removed!r}"
+    print("PASS: reasoning prompt includes context blocks and drops removed classification tokens")
 
     # ── Test 13: history truncation — last MAX_REASONING_HISTORY entries only ──
     _reset_sid()
@@ -959,7 +940,6 @@ def test_chat():
     yes_json = _reasoning_payload(
         "PLAN",
         rewritten_query="What is the salary range for Noa Levy?",
-        conversation_state="post_clarification",
     )
     yes_state = {
         **base_state,
@@ -1013,6 +993,59 @@ def test_chat():
     assert "chat_reasoning" not in result_plain, \
         "delivery path must not overwrite chat_reasoning"
     print("PASS: delivery path returns only {conversation_history, final_answer}")
+
+    # ── Test 17: _normalize_reasoning / _fallback_reasoning emit the trimmed schema ──
+    _reset_sid()
+    normalized = _normalize_reasoning({
+        "reasoning": {
+            "user_intent":        "look up a fact",
+            "gaps":               [],
+            "decision_rationale": "clear lookup",
+        },
+        "decision":               "PLAN",
+        "rewritten_query":        "What is Dan Cohen's salary?",
+        "clarifying_question":    "",
+        "direct_response":        "",
+        "session_context_update": {},
+    }, "original")
+    assert set(normalized["reasoning"].keys()) == {"user_intent", "gaps", "decision_rationale"}, \
+        f"normalized reasoning has unexpected keys: {normalized['reasoning'].keys()}"
+
+    fb = _fallback_reasoning("orig q")
+    assert set(fb["reasoning"].keys()) == {"user_intent", "gaps", "decision_rationale"}, \
+        f"fallback reasoning has unexpected keys: {fb['reasoning'].keys()}"
+    assert fb["decision"] == "PLAN"
+    assert fb["rewritten_query"] == "orig q"
+    print("PASS: reasoning normalize/fallback emit only {user_intent, gaps, decision_rationale}")
+
+    # ── Test 18: PLAN rewritten_query is natural language, no procedural words ──
+    # Test fixtures we author in this suite must obey the contract the prompt
+    # enforces at runtime. If this ever fails, rewrite the test fixture to
+    # match how a user would actually phrase the question.
+    _reset_sid()
+    banned_tokens = (
+        "source", "table", "record", "document", "file",
+        "retrieve", "provide", "lookup", "if available", "otherwise",
+    )
+    clean_queries_seen: list[str] = []
+    # Collect every rewritten_query authored in _reasoning_payload calls above.
+    for q in (
+        "What is Dan Cohen's flight class entitlement?",
+        "What is the salary range for Noa Levy?",
+        "What is Dan's (Engineering) salary?",
+        "What is Dan Cohen's salary?",
+        "What is X?",
+    ):
+        clean_queries_seen.append(q)
+
+    for q in clean_queries_seen:
+        low = q.lower()
+        for banned in banned_tokens:
+            assert banned not in low, (
+                f"test-authored rewritten_query {q!r} contains banned token "
+                f"{banned!r} — update the fixture to a natural-language question"
+            )
+    print("PASS: all test-authored PLAN rewrites avoid source/procedural language")
 
     _reset_sid()
     print("\nPASS: all chat tests passed")

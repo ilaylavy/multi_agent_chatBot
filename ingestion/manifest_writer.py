@@ -13,14 +13,20 @@ delete_source_from_manifest(source_id)
     Raises ValueError if source_id is not found in either file.
     Calls invalidate_manifest_cache() after writing.
 
-Both functions determine which section (pdfs | tables) to write into by
-inspecting the detail_entry["type"] field:
+regenerate_data_context()
+    Produce the top-level `data_context` paragraph for manifest_index.yaml
+    via a single LLM call. Domain-agnostic — never names specific sources.
+    Called at ingest time so query-time readers can load it synchronously.
+
+Both source-write functions determine which section (pdfs | tables) to
+write into by inspecting the detail_entry["type"] field:
     type == "pdf"           → pdfs section
     type == "csv" | "sqlite" → tables section
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Any
@@ -32,6 +38,34 @@ from core.manifest import invalidate_manifest_cache
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+
+_EMPTY_FALLBACK   = "The system has no ingested data yet."
+_GENERIC_FALLBACK = "The system answers questions from the currently ingested data sources."
+
+
+_DATA_CONTEXT_SYSTEM_PROMPT = """\
+You write a one-paragraph user-facing description of what a data-answering
+system can help with, based on a manifest of its ingested data. Your output
+feeds a chat agent's out-of-scope detection: it tells the agent what kinds
+of questions fall inside the system's knowledge.
+
+Requirements:
+  - Produce ONE paragraph, 2 to 4 sentences, in plain natural language.
+  - Describe the DOMAINS, TOPICS, and KINDS OF QUESTIONS the system can
+    answer. Speak in general terms a non-technical reader would understand.
+  - Do NOT name any specific source, file, table, column, entity, or
+    identifier from the manifest — even if the manifest lists them plainly.
+  - Do NOT mention file types (PDF, CSV, SQLite, spreadsheet, database,
+    document, table).
+  - Do NOT enumerate or list items. Do not use bullets.
+  - Do NOT say "the manifest", "the index", "this system contains N
+    sources", or anything that references the underlying structure.
+  - If the manifest is sparse or very narrow, describe what is there in
+    general terms rather than inventing scope.
+
+Output ONLY the paragraph — no preamble, no JSON, no headings.
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +330,81 @@ def delete_source_from_manifest(
     invalidate_manifest_cache()
 
 
+async def regenerate_data_context(
+    *,
+    index_path: Path | None = None,
+) -> str:
+    """
+    Produce the top-level `data_context` paragraph for manifest_index.yaml.
+
+    Reads the current manifest index, asks the ingestion LLM for a short
+    natural-language paragraph describing the domains, topics, and kinds
+    of questions this system can answer, and writes the paragraph back
+    under the top-level `data_context` key. Invalidates the manifest
+    cache on write.
+
+    The prompt is domain-agnostic — the LLM is instructed never to name
+    any source, table, column, entity, or file type. Intended to be
+    called from ingestion entry points (per-source upload and end of
+    batch), not from the query hot path.
+
+    Returns the paragraph that was written:
+      - The LLM output on success.
+      - `_EMPTY_FALLBACK` when the manifest has no sources.
+      - `_GENERIC_FALLBACK` when the LLM call fails or returns empty.
+    """
+    from core.llm_config import _load_config, get_llm
+    if index_path is None:
+        paths = _load_config()["paths"]
+        idx_path = _PROJECT_ROOT / paths["manifest_index"]
+    else:
+        idx_path = index_path
+
+    idx_data = _read_yaml(idx_path)
+    pdfs   = idx_data.get("pdfs")   or []
+    tables = idx_data.get("tables") or []
+
+    if not pdfs and not tables:
+        paragraph = _EMPTY_FALLBACK
+        idx_data["data_context"] = paragraph
+        _write_yaml(idx_path, idx_data)
+        invalidate_manifest_cache()
+        return paragraph
+
+    manifest_view = {
+        "pdfs":             pdfs,
+        "tables":           tables,
+        "relationships":    idx_data.get("relationships")    or [],
+        "domain_context":   idx_data.get("domain_context")   or "",
+    }
+    user_message = (
+        "MANIFEST INDEX:\n"
+        f"{json.dumps(manifest_view, indent=2, ensure_ascii=False)}\n\n"
+        "Produce the paragraph."
+    )
+
+    try:
+        llm = get_llm("planner")
+        resp = await llm.ainvoke([
+            {"role": "system", "content": _DATA_CONTEXT_SYSTEM_PROMPT},
+            {"role": "user",   "content": user_message},
+        ])
+        paragraph = (resp.content or "").strip()
+        if not paragraph:
+            raise ValueError("LLM returned empty response")
+    except Exception as exc:
+        logger.warning(
+            "regenerate_data_context: LLM call failed (%s); using generic fallback.",
+            exc,
+        )
+        paragraph = _GENERIC_FALLBACK
+
+    idx_data["data_context"] = paragraph
+    _write_yaml(idx_path, idx_data)
+    invalidate_manifest_cache()
+    return paragraph
+
+
 # ---------------------------------------------------------------------------
 # Isolated test — run with: python -m ingestion.manifest_writer
 # ---------------------------------------------------------------------------
@@ -451,6 +560,72 @@ def test_manifest_writer():
         except ValueError as exc:
             assert "excel" in str(exc)
             print(f"PASS: _section_for raises ValueError for unknown type: {exc}")
+
+        # ── Test 7: regenerate_data_context — empty manifest, no LLM ─
+        import asyncio
+        from unittest.mock import AsyncMock, MagicMock
+
+        empty_idx_path = Path(tmpdir) / "empty_index.yaml"
+        _write_yaml(empty_idx_path, {"pdfs": [], "tables": []})
+
+        llm_patch = "core.llm_config.get_llm"
+        no_llm = MagicMock()
+        with patch(llm_patch, return_value=no_llm):
+            paragraph = asyncio.run(regenerate_data_context(index_path=empty_idx_path))
+        assert paragraph == _EMPTY_FALLBACK
+        no_llm.ainvoke.assert_not_called() if hasattr(no_llm, "ainvoke") else None
+        reloaded = _read_yaml(empty_idx_path)
+        assert reloaded.get("data_context") == _EMPTY_FALLBACK
+        print("PASS: regenerate_data_context writes _EMPTY_FALLBACK on empty manifest without calling LLM")
+
+        # ── Test 8: regenerate_data_context — populated manifest, LLM called, sentinel not leaked ──
+        sentinel = "ZZZ_SENTINEL_SOURCE"
+        populated_idx_path = Path(tmpdir) / "populated_index.yaml"
+        _write_yaml(populated_idx_path, {
+            "pdfs":   [{"id": sentinel, "name": sentinel, "summary": "some policy",
+                        "contains": ["some topic"]}],
+            "tables": [],
+        })
+
+        generic_paragraph = (
+            "This system answers questions about corporate policies and employee "
+            "records, including rules governing day-to-day operations."
+        )
+        fake_resp = MagicMock(); fake_resp.content = generic_paragraph
+        fake_llm = MagicMock(); fake_llm.ainvoke = AsyncMock(return_value=fake_resp)
+        with patch(llm_patch, return_value=fake_llm):
+            paragraph2 = asyncio.run(regenerate_data_context(index_path=populated_idx_path))
+
+        fake_llm.ainvoke.assert_called_once()
+        call_messages = fake_llm.ainvoke.call_args[0][0]
+        # The LLM message is what we sent; the sentinel IS present in the input
+        # (that's the whole manifest) — but the returned paragraph must not contain
+        # it, and the written data_context must match the LLM output.
+        user_msg = next(m["content"] for m in call_messages if m["role"] == "user")
+        assert sentinel in user_msg, "manifest content should reach the LLM prompt"
+        assert sentinel not in paragraph2, "returned paragraph must not contain the sentinel"
+        reloaded2 = _read_yaml(populated_idx_path)
+        assert reloaded2["data_context"] == generic_paragraph
+        # Original source entry preserved
+        assert reloaded2["pdfs"][0]["id"] == sentinel
+        print("PASS: regenerate_data_context writes LLM paragraph, preserves sources, keeps sentinel out of output")
+
+        # ── Test 9: regenerate_data_context — LLM exception → generic fallback ──
+        err_llm = MagicMock(); err_llm.ainvoke = AsyncMock(side_effect=RuntimeError("boom"))
+        with patch(llm_patch, return_value=err_llm):
+            paragraph3 = asyncio.run(regenerate_data_context(index_path=populated_idx_path))
+        assert paragraph3 == _GENERIC_FALLBACK
+        reloaded3 = _read_yaml(populated_idx_path)
+        assert reloaded3["data_context"] == _GENERIC_FALLBACK
+        print("PASS: regenerate_data_context falls back to generic paragraph on LLM error")
+
+        # ── Test 10: system prompt is domain-agnostic (no hardcoded source names) ──
+        prompt_lower = _DATA_CONTEXT_SYSTEM_PROMPT.lower()
+        for banned in ("employee", "travel", "policy", "salary", "clearance",
+                       "department", "vendor", "noa", "dan"):
+            assert banned not in prompt_lower, \
+                f"Domain-specific token {banned!r} leaked into _DATA_CONTEXT_SYSTEM_PROMPT"
+        print("PASS: _DATA_CONTEXT_SYSTEM_PROMPT contains no domain-specific tokens")
 
     print("\nPASS: all manifest_writer tests passed")
 

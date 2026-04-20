@@ -39,7 +39,7 @@ import pandas as pd
 
 from core.llm_config import get_llm
 from core.parse import parse_llm_json
-from ingestion.manifest_writer import write_source_to_manifest
+from ingestion.manifest_writer import regenerate_data_context, write_source_to_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -305,18 +305,24 @@ async def ingest_table(
     file_path: Path,
     source_id: str,
     table_name: str | None = None,
+    *,
+    regenerate_context: bool = True,
 ) -> dict[str, Any]:
     """
     Catalog and ingest a CSV or SQLite table into both manifests.
 
     Parameters
     ----------
-    file_path   : Absolute path to the .csv or .sqlite file.
-    source_id   : Identifier used in the manifests. Must be unique across all sources.
-    table_name  : SQLite only. If the file has exactly one table, ignored.
-                  If the file has multiple tables and this is None, raises ValueError
-                  listing all available table names. If provided, must exist in the file.
-                  Ignored for CSV.
+    file_path          : Absolute path to the .csv or .sqlite file.
+    source_id          : Identifier used in the manifests. Must be unique across all sources.
+    table_name         : SQLite only. If the file has exactly one table, ignored.
+                         If the file has multiple tables and this is None, raises ValueError
+                         listing all available table names. If provided, must exist in the file.
+                         Ignored for CSV.
+    regenerate_context : If True (default), regenerate the top-level
+                         data_context paragraph in manifest_index.yaml after
+                         writing the source. Batch callers can pass False to
+                         defer regeneration to end-of-batch.
 
     Returns
     -------
@@ -395,6 +401,9 @@ async def ingest_table(
         detail_entry["table_name"] = resolved_table
 
     write_source_to_manifest(source_id, index_entry, detail_entry)
+
+    if regenerate_context:
+        await regenerate_data_context()
 
     # ── 5. Return summary dict ────────────────────────────────────
     return {

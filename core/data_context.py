@@ -1,83 +1,38 @@
 """
-core/data_context.py — Domain summary derived at runtime from the manifest.
+core/data_context.py — Read the data_context paragraph from the manifest index.
 
-The Chat agent's reasoning call needs to know, at a high level, what the
-system can answer — enough to route out-of-scope queries (e.g. "what's the
-weather?") to a DIRECT response without pretending the pipeline can handle
-them. It must NOT be a hardcoded list of source names; if the deployment
-changes its data, the context changes automatically.
+The paragraph itself is produced at ingest time by
+ingestion/manifest_writer.py::regenerate_data_context() and stored in the
+top-level `data_context` field of manifest_index.yaml. This module is a
+thin synchronous reader — no LLM calls, no cache of its own (relies on
+core/manifest.py's manifest cache).
 
 Public:
   get_data_context() -> str
-
-Cached in a module-level dict. Invalidated automatically when the manifest
-cache is cleared (register_invalidation_callback).
 """
 
 from __future__ import annotations
 
 import logging
 
-from core.manifest import get_manifest_index_raw, register_invalidation_callback
+from core.manifest import get_manifest_index_raw
 
 logger = logging.getLogger(__name__)
 
 
-_cache: dict[str, str] = {}
-
-
-def _invalidate() -> None:
-    _cache.clear()
-
-
-register_invalidation_callback(_invalidate)
-
-
-def _build_summary(raw: dict) -> str:
-    lines: list[str] = ["The system contains the following data:"]
-
-    def _fmt_entry(entry: dict) -> str | None:
-        name = entry.get("name") or entry.get("id")
-        if not name:
-            return None
-        summary = (entry.get("summary") or "").strip()
-        kind = (entry.get("kind") or "").strip()
-        if kind and summary:
-            return f"- {name} ({kind}): {summary}"
-        if kind:
-            return f"- {name} ({kind})"
-        if summary:
-            return f"- {name}: {summary}"
-        return f"- {name}"
-
-    has_any = False
-    for entry in raw.get("pdfs", []) + raw.get("tables", []):
-        line = _fmt_entry(entry)
-        if line:
-            lines.append(line)
-            has_any = True
-
-    if not has_any:
-        return "The system has no ingested data yet."
-
-    domain_context = (raw.get("domain_context") or "").strip()
-    if domain_context:
-        lines.append("")
-        lines.append(f"Domain context: {domain_context}")
-
-    return "\n".join(lines)
+_GENERIC_FALLBACK = "The system answers questions from the currently ingested data sources."
 
 
 def get_data_context() -> str:
-    """Return a short bullet summary of what the system's data covers.
+    """Return the LLM-generated data context paragraph from the manifest.
 
-    Derived from the manifest index. Cached until the manifest cache is
-    invalidated. Domain-agnostic — never hardcodes source names.
+    The paragraph is written at ingest time. Returns a generic fallback
+    string when the field is missing — e.g. on a freshly cloned checkout
+    whose manifest predates this feature.
     """
-    if "summary" not in _cache:
-        raw = get_manifest_index_raw()
-        _cache["summary"] = _build_summary(raw)
-    return _cache["summary"]
+    raw = get_manifest_index_raw()
+    text = (raw.get("data_context") or "").strip()
+    return text or _GENERIC_FALLBACK
 
 
 # ---------------------------------------------------------------------------
@@ -87,63 +42,62 @@ def get_data_context() -> str:
 def test_data_context():
     from unittest.mock import patch
 
-    # Patch the imported alias in this module's own namespace so the test works
-    # whether imported as core.data_context or run via python -m core.data_context.
     patch_target = f"{__name__}.get_manifest_index_raw"
 
-    # 1. Well-formed manifest with both pdfs and tables, kinds present
-    fake_raw_full = {
-        "domain_context": "records describe employees; policies describe rules",
-        "pdfs": [
-            {"id": "policy_a", "name": "Policy A", "summary": "rules for X", "kind": "policy"},
-            {"id": "policy_b", "name": "Policy B", "summary": "rules for Y"},
-        ],
-        "tables": [
-            {"id": "records_a", "name": "Records A", "summary": "entity list", "kind": "record"},
-            {"id": "records_b", "name": "Records B"},
-        ],
-    }
-    _cache.clear()
-    with patch(patch_target, return_value=fake_raw_full):
-        out = get_data_context()
-
-    assert "Policy A (policy): rules for X" in out
-    assert "Policy B: rules for Y"            in out
-    assert "Records A (record): entity list"  in out
-    assert "Records B"                         in out
-    assert "Domain context:" in out
-    print("PASS: full manifest renders name/summary/kind correctly")
-
-    # 2. Cache hit — next call returns same string without consulting manifest
-    with patch(patch_target,
-               side_effect=AssertionError("manifest should not be re-read on cache hit")):
-        cached = get_data_context()
-    assert cached == out
-    print("PASS: cached on second call")
-
-    # 3. Invalidation clears cache
-    _invalidate()
-    assert _cache == {}
-    print("PASS: invalidation clears cache")
-
-    # 4. Empty manifest → explicit fallback
-    _cache.clear()
-    with patch(patch_target, return_value={"pdfs": [], "tables": []}):
-        out = get_data_context()
-    assert "no ingested data" in out.lower()
-    print("PASS: empty manifest yields fallback message")
-
-    # 5. Entries missing summary/kind are still rendered by name
-    _cache.clear()
+    # 1. data_context field present → returned verbatim
+    paragraph = (
+        "This system helps you look up company policies and employee records, "
+        "including rules about day-to-day operations and individual details."
+    )
     with patch(patch_target, return_value={
-        "pdfs":   [{"id": "p1", "name": "Only Name"}],
+        "pdfs":         [{"id": "p1", "name": "Some Policy"}],
+        "tables":       [{"id": "t1", "name": "Some Table"}],
+        "data_context": paragraph,
+    }):
+        out = get_data_context()
+    assert out == paragraph
+    print("PASS: data_context field is returned verbatim")
+
+    # 2. data_context field missing → generic fallback
+    with patch(patch_target, return_value={
+        "pdfs":   [{"id": "p1", "name": "X"}],
         "tables": [],
     }):
         out = get_data_context()
-    assert "- Only Name" in out
-    print("PASS: bare entries render by name only")
+    assert out == _GENERIC_FALLBACK
+    print("PASS: missing data_context field yields generic fallback")
 
-    _cache.clear()
+    # 3. data_context field empty string → generic fallback
+    with patch(patch_target, return_value={
+        "pdfs":         [{"id": "p1", "name": "X"}],
+        "tables":       [],
+        "data_context": "   ",
+    }):
+        out = get_data_context()
+    assert out == _GENERIC_FALLBACK
+    print("PASS: empty/whitespace data_context yields generic fallback")
+
+    # 4. Manifest empty (no pdfs/tables) and no data_context → generic fallback
+    with patch(patch_target, return_value={"pdfs": [], "tables": []}):
+        out = get_data_context()
+    assert out == _GENERIC_FALLBACK
+    print("PASS: empty manifest without data_context yields generic fallback")
+
+    # 5. Sentinel check — reader does not synthesize; it just returns the field.
+    # If the paragraph happens to reference a sentinel, the reader passes it
+    # through. The no-source-name contract is owned by the ingestion writer,
+    # not this reader. This test pins that contract: get_data_context returns
+    # whatever text the writer put in the manifest.
+    sentinel_paragraph = "The system contains ZZZ_SENTINEL (this would be a bug in the writer)."
+    with patch(patch_target, return_value={
+        "pdfs":         [{"id": "ZZZ_SENTINEL"}],
+        "tables":       [],
+        "data_context": sentinel_paragraph,
+    }):
+        out = get_data_context()
+    assert out == sentinel_paragraph
+    print("PASS: get_data_context is a pass-through; source-name contract is owned by the writer")
+
     print("PASS: all data_context tests passed")
 
 

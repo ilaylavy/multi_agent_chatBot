@@ -19,6 +19,7 @@ import asyncio
 import sqlite3
 from pathlib import Path
 
+from ingestion.manifest_writer import regenerate_data_context
 from ingestion.pdf_ingestor import ingest_pdf
 from ingestion.relationship_detector import detect_relationships
 from ingestion.table_ingestor import ingest_table
@@ -67,7 +68,7 @@ def _ingest_pdfs(pdf_files: list[Path]) -> int:
     for pdf_path in pdf_files:
         source_id = pdf_path.stem
         print(f"  {pdf_path.name}")
-        result = asyncio.run(ingest_pdf(pdf_path, source_id))
+        result = asyncio.run(ingest_pdf(pdf_path, source_id, regenerate_context=False))
         print(f"    source_id      : {result['source_id']}")
         print(f"    chunks_ingested: {result['chunks_ingested']}")
         summary = result["summary"]
@@ -93,13 +94,16 @@ def _ingest_tables(table_files: list[Path]) -> int:
             for table_name in tables:
                 source_id = table_name if len(tables) == 1 else f"{table_path.stem}_{table_name}"
                 print(f"  {table_path.name} -> {table_name}")
-                result = asyncio.run(ingest_table(table_path, source_id, table_name=table_name))
+                result = asyncio.run(ingest_table(
+                    table_path, source_id, table_name=table_name,
+                    regenerate_context=False,
+                ))
                 _print_table_result(result)
                 count += 1
         else:
             source_id = table_path.stem
             print(f"  {table_path.name}")
-            result = asyncio.run(ingest_table(table_path, source_id))
+            result = asyncio.run(ingest_table(table_path, source_id, regenerate_context=False))
             _print_table_result(result)
             count += 1
 
@@ -147,6 +151,13 @@ def run_ingestion() -> None:
     for rel in rel_result["cross_source"]:
         sources = rel["sources"]
         print(f"    {sources[0]} <-> {sources[1]} via {rel['shared_key']} (verified: {rel['verified']})")
+    print()
+
+    print("=" * 60)
+    print("DATA CONTEXT")
+    print("=" * 60)
+    paragraph = asyncio.run(regenerate_data_context())
+    print(f"  {paragraph}")
     print()
 
     print(f"Done. {n_pdfs} PDF(s) and {n_tables} table(s) ingested, {n_cross} relationships detected.")

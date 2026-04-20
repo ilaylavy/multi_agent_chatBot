@@ -32,7 +32,7 @@ import pymupdf4llm
 from core.llm_config import _load_config, get_llm
 from core.parse import parse_llm_json
 from core.retriever import ChromaRetriever
-from ingestion.manifest_writer import write_source_to_manifest
+from ingestion.manifest_writer import regenerate_data_context, write_source_to_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -82,15 +82,24 @@ def _chunk_text(text: str, size: int, overlap: int) -> list[str]:
 # Public API
 # ---------------------------------------------------------------------------
 
-async def ingest_pdf(file_path: Path, source_id: str) -> dict[str, Any]:
+async def ingest_pdf(
+    file_path: Path,
+    source_id: str,
+    *,
+    regenerate_context: bool = True,
+) -> dict[str, Any]:
     """
     Parse, catalog, chunk, and ingest a PDF into ChromaDB and both manifests.
 
     Parameters
     ----------
-    file_path : Absolute path to the PDF file.
-    source_id : Identifier used in the manifests and as the ChromaDB collection
-                name. Must be unique across all sources.
+    file_path          : Absolute path to the PDF file.
+    source_id          : Identifier used in the manifests and as the ChromaDB
+                         collection name. Must be unique across all sources.
+    regenerate_context : If True (default), regenerate the top-level
+                         data_context paragraph in manifest_index.yaml after
+                         writing the source. Batch callers can pass False to
+                         defer regeneration to end-of-batch.
 
     Returns
     -------
@@ -136,6 +145,9 @@ async def ingest_pdf(file_path: Path, source_id: str) -> dict[str, Any]:
         "notes":    "",
     }
     write_source_to_manifest(source_id, index_entry, detail_entry)
+
+    if regenerate_context:
+        await regenerate_data_context()
 
     # ── 4. Chunk full text ────────────────────────────────────────
     retrieval_cfg = _load_config()["retrieval"]
