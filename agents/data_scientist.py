@@ -144,13 +144,13 @@ def _execute_sql(query: str, file_path: Path) -> tuple[Any, int]:
     """
     Execute a SQL SELECT query against the SQLite database at file_path.
 
-    Only SELECT statements are permitted. Any other statement raises ValueError.
+    Only SELECT and WITH statements are permitted. Any other statement raises ValueError.
     Returns (rows_as_list_of_dicts, row_count).
     """
     stripped = query.strip().upper()
-    if not stripped.startswith("SELECT"):
+    if not stripped.startswith("SELECT") and not stripped.startswith("WITH"):
         raise ValueError(
-            f"Only SELECT statements are permitted. Got: {query[:80]}"
+            f"Only SELECT and WITH statements are permitted. Got: {query[:80]}"
         )
     conn = sqlite3.connect(str(file_path))
     try:
@@ -230,13 +230,13 @@ def _execute_sql_conn(query: str, conn: sqlite3.Connection) -> tuple[Any, int]:
     """
     Execute a SQL SELECT query against an open SQLite connection.
 
-    Only SELECT statements are permitted. Any other statement raises ValueError.
+    Only SELECT and WITH statements are permitted. Any other statement raises ValueError.
     Returns (rows_as_list_of_dicts, row_count).
     """
     stripped = query.strip().upper()
-    if not stripped.startswith("SELECT"):
+    if not stripped.startswith("SELECT") and not stripped.startswith("WITH"):
         raise ValueError(
-            f"Only SELECT statements are permitted. Got: {query[:80]}"
+            f"Only SELECT and WITH statements are permitted. Got: {query[:80]}"
         )
     conn.row_factory = sqlite3.Row
     cursor = conn.execute(query)
@@ -510,12 +510,12 @@ async def data_scientist_worker(
                 success=False,
                 error="LLM generated an empty SQL query.",
             )
-        if not stripped_query.upper().startswith("SELECT"):
+        if not stripped_query.upper().startswith("SELECT") and not stripped_query.upper().startswith("WITH"):
             return TaskResult(
                 task_id=task["task_id"],
                 worker_type="data_scientist",
                 output=_error_output(
-                    f"Only SELECT statements are permitted. Got: {query[:80]}",
+                    f"Only SELECT and WITH statements are permitted. Got: {query[:80]}",
                     "NON_SELECT",
                     query_used=query,
                     table_name=table_name,
@@ -524,7 +524,7 @@ async def data_scientist_worker(
                     injected_context=injected_context,
                 ),
                 success=False,
-                error=f"Only SELECT statements are permitted. Got: {query[:80]}",
+                error=f"Only SELECT and WITH statements are permitted. Got: {query[:80]}",
             )
 
     # ── Sandboxed execution ───────────────────────────────────────

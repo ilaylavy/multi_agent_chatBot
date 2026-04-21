@@ -78,6 +78,7 @@ STAGE 1 — UNDERSTAND
     independent of your final decision. Corrections overwrite prior values.
 
 STAGE 2 — ASSESS
+  - State the decision_rationale in one sentence.
   - Decide whether the user is asking for facts from the system's data, or
     doing something else (chatting, greeting, giving a self-identifying fact,
     providing information without asking a question, or asking something
@@ -91,9 +92,10 @@ STAGE 2 — ASSESS
       * ambiguous entity critical to the query
     Never judge whether the system *can* answer the question — that is the
     downstream planner's job. Only flag gaps that prevent writing a single
-    self-contained sentence.
+    self-contained query.
 
 STAGE 3 — ACT
+    you must choose exactly one of these three options based on the ASSESS stage:
   - DIRECT   — anything other than a data lookup: greetings, identity
                statements, out-of-scope questions, providing information
                without asking a data question, conversational responses.
@@ -104,14 +106,14 @@ STAGE 3 — ACT
                previous turn was a clarification and the user has now
                answered, move forward rather than asking again.
   - PLAN     — a data question with no unresolved gaps. Write rewritten_query
-               as ONE self-contained question a person would naturally ask,
+               as ONE self-contained query a person would naturally ask,
                including every entity and constraint needed to answer it.
                Do NOT reference sources, tables, records, files, or
                documents. Do NOT use procedural language such as "retrieve",
                "provide", "lookup", "if available", or "otherwise indicate".
-               Phrase it as a question a user would type, not an instruction
+               Phrase it as a query a user would type, not an instruction
                to a system. The downstream planner sees no conversation
-               history, so the question must stand alone.
+               history, so the query must stand alone.
 
 Rules that apply across stages:
   - Post-clarification confirmations ("yes", "right", "correct") must
