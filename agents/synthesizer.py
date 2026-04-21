@@ -7,6 +7,7 @@ Combines all worker TaskResults into one coherent draft answer.
 Rule: must not add any information not present in the task results.
 
 View    : original_query, plan, task_results, sources_used
+          (on retry: + retry_notes, previous_draft)
 Returns : { draft_answer: str, sources_used: List[SourceRef] }
 """
 
@@ -66,7 +67,20 @@ PLAN ({n_tasks} tasks, {n_failed} failed):
 
 TASK RESULTS:
 {results_block}
-{all_failed_block}"""
+{all_failed_block}{retry_section}"""
+
+_RETRY_NOTE_SECTION = """\
+
+RETRY CONTEXT — your previous draft was rejected by the Auditor.
+
+Your previous draft:
+{previous_draft}
+
+Auditor feedback:
+{retry_notes}
+
+Produce a corrected draft that addresses the Auditor's specific issues. Preserve what was correct and fix only what the Auditor flagged — do not rewrite from scratch unless necessary.
+"""
 
 _ALL_FAILED_BLOCK = """\
 
@@ -84,14 +98,20 @@ went wrong:
 def synthesizer_view(state: AgentState) -> dict:
     """
     Returns only the fields the Synthesizer's LLM prompt may see.
-    Does NOT include conversation_history, audit_result, retry_count, or retry_notes.
+
+    Base fields: original_query, plan, task_results, sources_used.
+    On retry (retry_count > 0 AND non-empty retry_notes): also retry_notes + previous_draft.
     """
-    return {
+    view: dict = {
         "original_query": state["original_query"],
         "plan":           state["plan"],
         "task_results":   state["task_results"],
         "sources_used":   state["sources_used"],
     }
+    if state.get("retry_count", 0) > 0 and state.get("retry_notes", ""):
+        view["retry_notes"]    = state["retry_notes"]
+        view["previous_draft"] = state.get("synthesizer_output", "")
+    return view
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +190,13 @@ async def synthesizer_node(state: AgentState) -> dict:
         )
         all_failed_block = _ALL_FAILED_BLOCK.format(error_lines=error_lines)
 
+    retry_section = ""
+    if "retry_notes" in view:
+        retry_section = _RETRY_NOTE_SECTION.format(
+            previous_draft=view.get("previous_draft", "") or "(no previous draft available)",
+            retry_notes=view["retry_notes"],
+        )
+
     user_message = _USER_TEMPLATE.format(
         original_query=view["original_query"],
         n_tasks=n_tasks,
@@ -177,6 +204,7 @@ async def synthesizer_node(state: AgentState) -> dict:
         plan_block=_format_plan_block(view),
         results_block=_format_results_block(view),
         all_failed_block=all_failed_block,
+        retry_section=retry_section,
     )
 
     llm = get_llm("synthesizer")
@@ -213,7 +241,7 @@ async def synthesizer_node(state: AgentState) -> dict:
 def test_synthesizer():
     from unittest.mock import AsyncMock, MagicMock, patch
 
-    from tests.fixtures import SYNTHESIZER_STATE
+    from tests.fixtures import SYNTHESIZER_STATE, SYNTHESIZER_RETRY_STATE
 
     patch_target = f"{__name__}.get_llm"
 
@@ -431,6 +459,54 @@ def test_synthesizer():
     assert "level B" not in tal_section and "clearance b" not in tal_section.lower(), \
         "Tal Mizrahi must NOT have clearance B"
     print("PASS: two entities with different clearance levels use correct values (no swap)")
+
+    # ── Test 7: view excludes retry fields on first pass, includes them on retry ─
+    base_view = synthesizer_view(SYNTHESIZER_STATE)
+    assert "retry_notes"    not in base_view
+    assert "previous_draft" not in base_view
+
+    retry_view = synthesizer_view(SYNTHESIZER_RETRY_STATE)
+    assert retry_view["retry_notes"]    == SYNTHESIZER_RETRY_STATE["retry_notes"]
+    assert retry_view["previous_draft"] == SYNTHESIZER_RETRY_STATE["synthesizer_output"]
+    print("PASS: synthesizer_view includes retry_notes + previous_draft on retry, excludes on first pass")
+
+    # ── Test 8: retry prompt includes RETRY CONTEXT, previous draft, and audit notes ─
+    captured_retry: list = []
+
+    async def capture_retry(messages):
+        captured_retry.extend(messages)
+        return mock_response
+
+    mock_llm.ainvoke = capture_retry
+
+    with patch(patch_target, return_value=mock_llm):
+        asyncio.run(synthesizer_node(SYNTHESIZER_RETRY_STATE))
+
+    user_prompt_retry = next(m["content"] for m in captured_retry if m["role"] == "user")
+    assert "RETRY CONTEXT" in user_prompt_retry, \
+        "Retry prompt must include RETRY CONTEXT header"
+    assert SYNTHESIZER_RETRY_STATE["synthesizer_output"] in user_prompt_retry, \
+        "Retry prompt must include the previous draft"
+    assert "omitted employee_id" in user_prompt_retry, \
+        "Retry prompt must include the Auditor feedback"
+    print("PASS: retry prompt carries RETRY CONTEXT, previous draft, and audit notes")
+
+    # ── Test 9: first-pass prompt does NOT include RETRY CONTEXT ─
+    captured_first: list = []
+
+    async def capture_first(messages):
+        captured_first.extend(messages)
+        return mock_response
+
+    mock_llm.ainvoke = capture_first
+
+    with patch(patch_target, return_value=mock_llm):
+        asyncio.run(synthesizer_node(SYNTHESIZER_STATE))
+
+    user_prompt_first = next(m["content"] for m in captured_first if m["role"] == "user")
+    assert "RETRY CONTEXT" not in user_prompt_first, \
+        "First-pass prompt must NOT include RETRY CONTEXT"
+    print("PASS: first-pass prompt omits RETRY CONTEXT")
 
     print("\nPASS: all synthesizer tests passed")
 

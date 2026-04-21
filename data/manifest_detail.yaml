@@ -15,17 +15,17 @@ pdfs:
     summary: Defines flight class entitlements for employees based on their clearance
       level, specifying allowable classes and conditions for upgrades.
   - heading: 'Section 2: Booking Rules'
-    summary: Details advance booking requirements and approval processes for exceptions,
-      including reimbursement limitations for last-minute bookings.
+    summary: Details advance booking requirements and approval processes for exceptions
+      and last-minute travel bookings.
   - heading: 'Section 3: Hotel Nightly Allowances'
     summary: Specifies maximum reimbursable hotel rates per night by clearance level
       and encourages cost-saving measures like shared accommodations.
   - heading: 'Section 4: Per Diem Rates'
     summary: Outlines daily meal and incidental expense allowances by clearance level,
-      receipt requirements, and annual adjustment procedures.
+      including rules for claims exceeding per diem limits.
   - heading: 'Section 5: Expense Reimbursement Process'
-    summary: Describes submission timelines, receipt and approval requirements, reimbursement
-      processing times, and dispute resolution for travel expenses.
+    summary: Describes the submission timeline, receipt requirements, approval thresholds,
+      and payment procedures for travel expense reimbursements.
   tags:
   - corporate travel policy
   - flight class entitlements
@@ -45,7 +45,7 @@ pdfs:
   sections:
   - heading: 'Chapter 1: Onboarding'
     summary: Details the onboarding process including required documents, IT setup,
-      and initial training and meetings for new employees.
+      and initial employee orientation tasks.
   - heading: 'Chapter 2: Leave Policy'
     summary: Describes leave entitlements based on clearance levels, procedures for
       requesting leave, and specifics on annual, sick, and parental leave.
@@ -54,7 +54,7 @@ pdfs:
       including performance improvement plans and promotion eligibility.
   - heading: 'Chapter 4: Code of Conduct'
     summary: Covers confidentiality obligations, conflict of interest disclosures,
-      and the disciplinary process including steps and consequences for misconduct.
+      and the disciplinary process including steps and grounds for immediate termination.
   tags:
   - employee onboarding
   - leave policy
@@ -64,8 +64,8 @@ pdfs:
   - conflict of interest
   - disciplinary process
   - IT setup
-  - employee documents
-  - performance improvement plan
+  - employee performance ratings
+  - parental leave
   notes: ''
 - id: it_security_policy
   filename: it_security_policy.pdf
@@ -80,7 +80,7 @@ pdfs:
       associated access, storage, and transmission controls.
   - heading: 'Section 3: Security Incident Reporting'
     summary: Specifies the definition of security incidents, reporting deadlines,
-      reporting methods, immediate response actions, and post-incident review procedures.
+      reporting methods, immediate actions, and post-incident procedures.
   - heading: 'Section 4: Data Access Matrix'
     summary: Provides a matrix of data access permissions by clearance level and outlines
       procedures for requesting and approving access outside the matrix.
@@ -187,13 +187,13 @@ tables:
     - USD
     description: Currency in which the salary is denominated
   relationships:
-  - from_column: clearance_level
-    to_table: employees
-    to_column: clearance_level
-    verified: true
   - from_column: department
     to_table: employees
     to_column: department
+    verified: true
+  - from_column: clearance_level
+    to_table: employees
+    to_column: clearance_level
     verified: true
   - from_column: department
     to_table: projects
@@ -293,13 +293,13 @@ tables:
     description: Employee ID of the manager supervising this employee, nullable if
       no manager
   relationships:
-  - from_column: clearance_level
-    to_table: salary_bands
-    to_column: clearance_level
-    verified: true
   - from_column: department
     to_table: salary_bands
     to_column: department
+    verified: true
+  - from_column: clearance_level
+    to_table: salary_bands
+    to_column: clearance_level
     verified: true
   - from_column: employee_id
     to_table: training_records
@@ -331,7 +331,7 @@ tables:
     min: 1
     max: 10
     format: integer
-    description: Identifier linking to the employee who completed the training
+    description: Identifier linking the training record to a specific employee
   - name: training_name
     type: string
     nullable: false
@@ -342,7 +342,7 @@ tables:
     - Financial Compliance
     - Leadership Fundamentals
     - Security Awareness
-    description: Name of the training course completed
+    description: Name of the training course completed by the employee
   - name: completion_date
     type: string
     nullable: true
@@ -474,7 +474,7 @@ tables:
     min: 1
     max: 10
     format: integer
-    description: Employee ID of the project lead
+    description: Identifier of the employee leading the project
   - name: budget
     type: integer
     nullable: false
@@ -482,7 +482,7 @@ tables:
     min: 30000
     max: 150000
     format: integer
-    description: Allocated budget for the project in dollars
+    description: Allocated budget for the project in currency units
   - name: spent
     type: integer
     nullable: false
@@ -490,7 +490,7 @@ tables:
     min: 12000
     max: 115000
     format: integer
-    description: Amount spent so far on the project in dollars
+    description: Amount of budget spent so far on the project
   - name: status
     type: string
     nullable: false
@@ -499,7 +499,7 @@ tables:
     - Active
     - Completed
     - On Hold
-    description: Current status of the project
+    description: Current status of the project such as Active, Completed, or On Hold
   - name: start_date
     type: string
     nullable: false
@@ -518,7 +518,7 @@ tables:
     - '2024-09-01'
     - '2024-10-01'
     format: YYYY-MM-DD
-    description: Project start date
+    description: Date when the project started
   - name: end_date
     type: string
     nullable: true
@@ -532,7 +532,7 @@ tables:
     - '2024-08-30'
     - '2024-09-15'
     format: YYYY-MM-DD
-    description: Project end date or expected completion date
+    description: Date when the project ended or is expected to end
   relationships:
   - from_column: department
     to_table: salary_bands

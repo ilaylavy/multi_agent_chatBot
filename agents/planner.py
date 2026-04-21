@@ -88,8 +88,15 @@ Respond with ONLY JSON — no explanation, no markdown:
 
 _RETRY_NOTE_SECTION = """\
 
-RETRY CONTEXT — a previous answer was rejected. Use these notes to plan better:
+RETRY CONTEXT — a previous answer was rejected.
+
+Your previous reasoning:
+{previous_reasoning}
+
+Auditor feedback:
 {retry_notes}
+
+Decide whether the plan needs to change. If the plan was correct, produce the same plan — the synthesis layer will correct itself.
 """
 
 _USER_TEMPLATE = """\
@@ -110,14 +117,15 @@ def planner_view(state: AgentState) -> dict:
     Returns only the fields the Planner's LLM prompt may see.
     When rewritten_query is non-empty it takes precedence over original_query
     so the Planner plans against the context-enriched version of the question.
-    retry_notes is included only when non-empty AND retry_count > 0.
+    On retry (retry_count > 0 AND non-empty retry_notes): also retry_notes + previous_reasoning.
     """
     view = {
         "original_query":   state.get("rewritten_query") or state["original_query"],
         "manifest_context": state["manifest_context"],
     }
     if state.get("retry_count", 0) > 0 and state.get("retry_notes", ""):
-        view["retry_notes"] = state["retry_notes"]
+        view["retry_notes"]        = state["retry_notes"]
+        view["previous_reasoning"] = state.get("planner_reasoning", "")
     return view
 
 
@@ -135,7 +143,10 @@ async def planner_node(state: AgentState) -> dict:
 
     retry_section = ""
     if "retry_notes" in view:
-        retry_section = _RETRY_NOTE_SECTION.format(retry_notes=view["retry_notes"])
+        retry_section = _RETRY_NOTE_SECTION.format(
+            previous_reasoning=view.get("previous_reasoning", "") or "(no previous reasoning available)",
+            retry_notes=view["retry_notes"],
+        )
 
     user_message = _USER_TEMPLATE.format(
         manifest_context=filtered_manifest,
@@ -257,10 +268,33 @@ def test_planner():
         "Planner must use rewritten_query when it is non-empty"
     print("PASS: planner_view uses rewritten_query when non-empty")
 
-    # ── Test 2: view includes retry_notes on retry ────────────────
+    # ── Test 2: view includes retry_notes and previous_reasoning on retry ──
     retry_view = planner_view(PLANNER_RETRY_STATE)
     assert "retry_notes" in retry_view, "retry_notes must be present when retry_count > 0"
-    print("PASS: planner_view includes retry_notes on retry")
+    assert "previous_reasoning" in retry_view, "previous_reasoning must be present on retry"
+    assert retry_view["previous_reasoning"] == PLANNER_RETRY_STATE["planner_reasoning"]
+    print("PASS: planner_view includes retry_notes + previous_reasoning on retry")
+
+    # ── Test 2b: retry prompt renders RETRY CONTEXT with previous reasoning and audit notes ─
+    captured_retry_msgs: list = []
+
+    async def capture_retry_msgs(messages):
+        captured_retry_msgs.extend(messages)
+        return mock_response
+
+    mock_llm.ainvoke = capture_retry_msgs
+
+    with patch(f"{__name__}.get_llm", return_value=mock_llm):
+        asyncio.run(planner_node(PLANNER_RETRY_STATE))
+
+    retry_user_prompt = next(m["content"] for m in captured_retry_msgs if m["role"] == "user")
+    assert "RETRY CONTEXT" in retry_user_prompt
+    assert "Your previous reasoning" in retry_user_prompt
+    assert "information_needed" in retry_user_prompt, \
+        "Previous reasoning content must be rendered in the retry prompt"
+    assert "did not cite which section" in retry_user_prompt, \
+        "Auditor feedback must be rendered in the retry prompt"
+    print("PASS: planner retry prompt renders previous reasoning and audit notes")
 
     # patch target must match the module's __name__ at runtime:
     # "agents.planner" when imported, "__main__" when run directly

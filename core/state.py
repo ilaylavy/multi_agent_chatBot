@@ -111,13 +111,14 @@ def chat_agent_view(state: AgentState) -> dict:
 
 
 def planner_view(state: AgentState) -> dict:
-    """Planner sees: original_query (or rewritten_query when set), manifest_context, retry_notes (on retry only)."""
+    """Planner sees: original_query (or rewritten_query when set), manifest_context, and on retry also retry_notes + previous_reasoning."""
     view: dict = {
         "original_query":   state.get("rewritten_query") or state["original_query"],
         "manifest_context": state["manifest_context"],
     }
-    if state.get("retry_notes"):
-        view["retry_notes"] = state["retry_notes"]
+    if state.get("retry_count", 0) > 0 and state.get("retry_notes", ""):
+        view["retry_notes"]        = state["retry_notes"]
+        view["previous_reasoning"] = state.get("planner_reasoning", "")
     return view
 
 
@@ -151,13 +152,17 @@ def data_scientist_view(state: AgentState, task: Task, manifest_details: str) ->
 
 
 def synthesizer_view(state: AgentState) -> dict:
-    """Synthesizer sees: original_query, plan, task_results, sources_used."""
-    return {
+    """Synthesizer sees: original_query, plan, task_results, sources_used, and on retry also retry_notes + previous_draft."""
+    view: dict = {
         "original_query": state["original_query"],
         "plan":           state["plan"],
         "task_results":   state["task_results"],
         "sources_used":   state["sources_used"],
     }
+    if state.get("retry_count", 0) > 0 and state.get("retry_notes", ""):
+        view["retry_notes"]    = state["retry_notes"]
+        view["previous_draft"] = state.get("synthesizer_output", "")
+    return view
 
 
 def auditor_view(state: AgentState) -> dict:

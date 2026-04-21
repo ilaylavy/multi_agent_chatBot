@@ -65,6 +65,7 @@ PLANNER_RETRY_STATE: dict[str, Any] = {
     **PLANNER_STATE,
     "retry_count": 1,
     "retry_notes": "The draft answer claimed Noa can fly Business Class but did not cite which section of the travel policy supports this. Re-run and ensure the specific entitlement rule is quoted.",
+    "planner_reasoning": '{"information_needed": ["Noa clearance", "flight entitlements"], "dependencies": ["t2 needs t1"]}',
 }
 
 # ── Minimal state for Auditor tests ──────────────────────────
@@ -127,4 +128,12 @@ SYNTHESIZER_STATE: dict[str, Any] = {
     "retry_notes": "",
     "final_answer": "",
     "final_sources": [],
+}
+
+# ── Minimal state for Synthesizer RETRY test ─────────────────
+SYNTHESIZER_RETRY_STATE: dict[str, Any] = {
+    **SYNTHESIZER_STATE,
+    "retry_count": 1,
+    "retry_notes": "Draft omitted employee_id for Dan Cohen. Include employee_id from the task result.",
+    "synthesizer_output": "Dan Cohen holds clearance level B according to the employees table.",
 }
