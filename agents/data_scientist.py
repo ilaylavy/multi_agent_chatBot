@@ -30,6 +30,7 @@ import pandas as pd
 from core.llm_config import _load_config, get_llm
 from core.manifest import get_manifest_detail, get_manifest_detail_raw, get_manifest_details
 from core.parse import parse_llm_json
+from core.prompt_capture import capture as capture_prompt
 from core.state import AgentState, Task, TaskResult
 
 logger = logging.getLogger(__name__)
@@ -441,6 +442,12 @@ async def data_scientist_worker(
     )
 
     llm = get_llm("data_scientist")
+    capture_prompt(
+        state.get("session_id", ""),
+        state.get("retry_count", 0) + 1,
+        "data_scientist", task["task_id"],
+        _SYSTEM_PROMPT, user_message,
+    )
     response = await llm.ainvoke([
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user",   "content": user_message},

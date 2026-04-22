@@ -21,6 +21,7 @@ from typing import List
 from core.llm_config import _load_config, get_llm
 from core.manifest import get_manifest_details
 from core.parse import parse_llm_json
+from core.prompt_capture import capture as capture_prompt
 from core.reranker import get_reranker
 from core.retriever import ChromaRetriever, RetrieverInterface
 from core.state import AgentState, Chunk, Task, TaskResult
@@ -180,6 +181,12 @@ async def librarian_worker(
     )
 
     llm = get_llm("librarian")
+    capture_prompt(
+        state.get("session_id", ""),
+        state.get("retry_count", 0) + 1,
+        "librarian", task["task_id"],
+        _SYSTEM_PROMPT, user_message,
+    )
     response = await llm.ainvoke([
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user",   "content": user_message},

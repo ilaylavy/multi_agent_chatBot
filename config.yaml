@@ -93,6 +93,16 @@ langsmith:
   enabled: true
   project: multi-agent-rag
 
+# Prompt tracing — captures the full system+user message sent to each agent's LLM.
+# Levels:
+#   minimal           — default. No capture. Zero overhead.
+#   full              — capture the final call per (agent, call_name) per query.
+#                       Surfaces as trace.agent_prompts.
+#   full_with_retries — capture every call on every retry attempt. Each
+#                       retry_history entry carries the prompts that produced it.
+tracing:
+  capture_prompts: full_with_retries
+
 # Session
 session:
   memory: in_memory     # Options: in_memory | sqlite (future) | redis (future)

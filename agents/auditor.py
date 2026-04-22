@@ -19,6 +19,7 @@ import logging
 
 from core.llm_config import get_llm
 from core.parse import parse_llm_json
+from core.prompt_capture import capture as capture_prompt, get_prompts_for_attempt
 from core.state import AgentState, AuditResult
 
 logger = logging.getLogger(__name__)
@@ -145,6 +146,13 @@ async def auditor_node(state: AgentState) -> dict:
     )
 
     llm = get_llm("auditor")
+    attempt_number = state["retry_count"] + 1
+    capture_prompt(
+        state.get("session_id", ""),
+        attempt_number,
+        "auditor", "main",
+        _SYSTEM_PROMPT, user_message,
+    )
     response = await llm.ainvoke([
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user",   "content": user_message},
@@ -167,13 +175,20 @@ async def auditor_node(state: AgentState) -> dict:
         state["retry_count"] + 1,
     )
 
-    # Append to retry_history on every audit (PASS or FAIL)
+    # Append to retry_history on every audit (PASS or FAIL).
+    # agent_prompts carries every prompt captured during this attempt
+    # (planner, workers, synthesizer, auditor). Empty list when tracing
+    # is minimal or disabled — callers can treat it uniformly.
     history = list(state.get("retry_history", []))
+    attempt_index = len(history) + 1
     history.append({
-        "attempt":       len(history) + 1,
-        "draft_answer":  view["draft_answer"],
-        "audit_verdict": verdict,
-        "audit_notes":   notes,
+        "attempt":        attempt_index,
+        "draft_answer":   view["draft_answer"],
+        "audit_verdict":  verdict,
+        "audit_notes":    notes,
+        "agent_prompts":  get_prompts_for_attempt(
+            state.get("session_id", ""), attempt_index,
+        ),
     })
 
     if verdict == "PASS":

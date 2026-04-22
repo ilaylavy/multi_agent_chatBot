@@ -51,6 +51,15 @@ def _load_config() -> dict:
         return yaml.safe_load(f)
 
 
+def get_config() -> dict:
+    """Public accessor for the cached config.yaml dict.
+
+    Use this instead of importing the underscore-prefixed loader when code
+    outside this module needs to read config sections (tracing, retrieval, etc).
+    """
+    return _load_config()
+
+
 def _agent_config(agent_name: str) -> dict:
     """Return the llm config block for a single agent."""
     config = _load_config()

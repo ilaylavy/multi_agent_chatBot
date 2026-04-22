@@ -908,10 +908,24 @@ function appendAssistantBubble(data, query) {
             <div><strong>Notes:</strong> ${esc(attempt.audit_notes || '—')}</div>
             <div style="margin-top:0.2rem"><strong>Draft:</strong></div>
             <div class="task-output">${esc(attempt.draft_answer || '')}</div>
+            ${renderAgentPrompts(attempt.agent_prompts)}
           </div>
         `;
         traceBodyRh.appendChild(att);
       });
+    }
+
+    // Top-level agent prompts — rendered only in "full" mode (capture_mode reflects
+    // the server-side setting; in "full_with_retries" prompts live in each attempt).
+    if (t.capture_mode === 'full' && (t.agent_prompts || []).length) {
+      const traceBodyAp = details.querySelector('.trace-body');
+      const apHeader = document.createElement('div');
+      apHeader.style.marginTop = '0.6rem';
+      apHeader.innerHTML = `<strong>Agent Prompts</strong> <em style="color:var(--pico-muted-color);font-size:0.75rem">(final call per agent)</em>`;
+      traceBodyAp.appendChild(apHeader);
+      const wrap = document.createElement('div');
+      wrap.innerHTML = renderAgentPrompts(t.agent_prompts);
+      traceBodyAp.appendChild(wrap);
     }
 
     // Task results — appended to .trace-body after innerHTML is set
@@ -1221,6 +1235,25 @@ function renderSessionContext(before, after) {
         <tbody>${rows}</tbody>
       </table>
     </div>
+  </details>`;
+}
+
+function renderAgentPrompts(prompts) {
+  const list = prompts || [];
+  if (!list.length) return '';
+  const items = list.map(p => {
+    const label = p.call && p.call !== 'main' ? `${esc(p.agent)} <em style="color:var(--pico-muted-color);font-size:0.75rem">(${esc(p.call)})</em>` : `<strong>${esc(p.agent)}</strong>`;
+    return `<details class="retry-attempt" style="margin-top:0.3rem"><summary>${label}</summary>
+      <div class="retry-attempt-body">
+        <div><strong>System:</strong></div>
+        <pre style="white-space:pre-wrap;max-height:240px;overflow:auto;font-size:0.75rem">${esc(p.system || '')}</pre>
+        <div><strong>User:</strong></div>
+        <pre style="white-space:pre-wrap;max-height:360px;overflow:auto;font-size:0.75rem">${esc(p.user || '')}</pre>
+      </div>
+    </details>`;
+  }).join('');
+  return `<details class="retry-attempt" style="margin-top:0.4rem"><summary><strong>Agent Prompts</strong> <em style="color:var(--pico-muted-color);font-size:0.75rem">(${list.length})</em></summary>
+    <div class="retry-attempt-body">${items}</div>
   </details>`;
 }
 </script>
