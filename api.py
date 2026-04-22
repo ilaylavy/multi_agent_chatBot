@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from core.llm_config import _load_config
 from core.manifest import get_manifest_detail_raw, get_manifest_index, get_manifest_index_raw
 from core.manifest_prefilter import get_last_prefilter_trace
+from core.prompt_capture import clear_captures, get_latest_prompts, get_mode as get_capture_mode
 from core.retriever import ChromaRetriever
 from core.session_context import get_session_context
 from core.state import AgentState, Message, SourceRef
@@ -117,6 +118,11 @@ class TraceInfo(BaseModel):
     chat_reasoning:               Optional[str]            = None
     chat_session_context_before:  Optional[Dict[str, Any]] = None
     chat_session_context_after:   Optional[Dict[str, Any]] = None
+    # Populated only when tracing.capture_prompts is "full". In
+    # "full_with_retries" mode each retry_history entry carries its own
+    # agent_prompts so this stays None to avoid double-reporting.
+    capture_mode:                 Optional[str]            = None
+    agent_prompts:                Optional[List[dict]]     = None
 
 
 class ChatResponse(BaseModel):
@@ -271,6 +277,10 @@ def get_conversation(session_id: str):
 
 @app.post("/chat", response_model=ChatResponse, responses={500: {"model": ErrorResponse}})
 async def chat(req: ChatRequest):
+    # Drop any prompt captures left over from the previous turn on this session
+    # so we don't leak across queries. No-op when tracing is minimal.
+    clear_captures(req.session_id)
+
     history: list[Message] = list(_sessions.get(req.session_id, []))
 
     initial_state: AgentState = {
@@ -362,6 +372,12 @@ async def chat(req: ChatRequest):
 
     chat_formatted = bool(synthesizer_output) and final_state["final_answer"] != _FAILURE_MESSAGE
 
+    capture_mode = get_capture_mode()
+    # In "full" mode, expose one prompt per (agent, call_name) at the top level.
+    # In "full_with_retries" we keep it None so retry_history is the sole source
+    # of truth — avoids duplicating the same prompts in two places in the JSON.
+    agent_prompts_top = get_latest_prompts(req.session_id) if capture_mode == "full" else None
+
     trace = TraceInfo(
         retry_count=final_state.get("retry_count", 0),
         audit_verdict=audit_verdict,
@@ -380,6 +396,8 @@ async def chat(req: ChatRequest):
         chat_reasoning=final_state.get("chat_reasoning") or None,
         chat_session_context_before=session_context_before,
         chat_session_context_after=session_context_after,
+        capture_mode=capture_mode,
+        agent_prompts=agent_prompts_top,
     )
 
     # Build and store the full conversation entry (used by GET

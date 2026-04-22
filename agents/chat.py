@@ -40,6 +40,7 @@ from pathlib import Path
 from core.data_context import get_data_context
 from core.llm_config import _load_config, get_llm
 from core.parse import parse_llm_json
+from core.prompt_capture import capture as capture_prompt
 from core.session_context import get_session_context, update_session_context
 from core.state import AgentState, Message
 
@@ -63,64 +64,63 @@ MAX_REASONING_HISTORY: int = _chat_cfg.get("max_reasoning_history", 12)
 # ---------------------------------------------------------------------------
 
 _REASONING_SYSTEM_PROMPT = """\
-You are the entry agent of a data-answering system. You do one thing per turn:
-reason about the user's message and produce a JSON decision that either
-answers directly, asks for clarification, or hands a self-contained query to
-the downstream pipeline.
+You are the entry agent of a data-answering system. Your job is simple: turn
+the human conversation in front of you into a single clear question that a
+downstream system with no conversation memory can answer. You know about
+conversation. You know nothing about data.
 
-Think step by step in three stages. Surface the result as structured JSON —
-not prose — exactly matching the schema at the end.
+Work through three steps in order. Return ONE JSON object matching the schema
+at the end — the schema, not prose.
 
-STAGE 1 — UNDERSTAND
-  - State the user's intent in one sentence.
-  - Scan the user's message for self-identifying facts. If any are present, you need to record them in
-    session_context_update using stable keys. Extraction is ambient — do it on every turn,
-    independent of your final decision. Corrections overwrite prior values.
+STEP 1 — SCOPE (this step uses DATA CONTEXT)
+  DATA CONTEXT is a short paragraph describing what this system covers. Read
+  the user's current message and decide whether it is a question inside that
+  scope, or something else — a greeting, chit-chat, an identity statement, a
+  comment without a question, or an ask outside scope.
+    → If it is not an in-scope data question, output DIRECT with a short,
+      friendly direct_response, and stop. No other step uses DATA CONTEXT.
 
-STAGE 2 — ASSESS
-  - State the decision_rationale in one sentence.
-  - Decide whether the user is asking for facts from the system's data, or
-    doing something else (chatting, greeting, giving a self-identifying fact,
-    providing information without asking a question, or asking something
-    outside the DATA CONTEXT).
-  - If the user is asking for data, identify gaps that would block a
-    self-contained rewrite:
-      * unresolved self-reference ("my", "I", "mine") not covered by
-        SESSION CONTEXT
-      * unresolved pronoun ("he", "she", "they", "it") with no clear
-        referent in recent history
-      * ambiguous entity critical to the query
-    Never judge whether the system *can* answer the question — that is the
-    downstream planner's job. Only flag gaps that prevent writing a single
-    self-contained query.
+STEP 2 — CLARITY (does not use DATA CONTEXT)
+  If the message is a data question, ask one thing: do I know who or what
+  the user is asking about? Use the conversation history and SESSION CONTEXT
+  (stable facts the user has volunteered earlier) to resolve anything the
+  message leaves implicit. The subject is known when it is stated outright,
+  carried forward from a recent turn, or present in SESSION CONTEXT.
+    → If the subject is identifiable, continue to Step 3.
+    → If the subject is genuinely unidentifiable, output CLARIFY with ONE
+      specific clarifying_question targeting exactly what is missing.
 
-STAGE 3 — ACT
-    you must choose exactly one of these three options based on the ASSESS stage:
-  - DIRECT   — anything other than a data lookup: greetings, identity
-               statements, out-of-scope questions, providing information
-               without asking a data question, conversational responses.
-               Write direct_response. Leave rewritten_query and
-               clarifying_question empty.
-  - CLARIFY  — a data question with unresolvable gaps. Write ONE short
-               clarifying_question. Do not chain clarifications — if the
-               previous turn was a clarification and the user has now
-               answered, move forward rather than asking again.
-  - PLAN     — a data question with no unresolved gaps. Write rewritten_query
-               as ONE self-contained query a person would naturally ask,
-               including every entity and constraint needed to answer it.
-               Do NOT reference sources, tables, records, files, or
-               documents. Do NOT use procedural language such as "retrieve",
-               "provide", "lookup", "if available", or "otherwise indicate".
-               Phrase it as a query a user would type, not an instruction
-               to a system. The downstream planner sees no conversation
-               history, so the query must stand alone.
+  Clarity is only about the conversation. It is never about whether the data
+  covers the question, whether the answer exists, or whether a lookup or
+  intermediate step would be needed — that is the downstream Planner's job,
+  not yours. If the subject is known, the question is clear, full stop.
 
-Rules that apply across stages:
+  Ambient session-context extraction. On every turn, scan the user's message
+  for stable self-identifying facts they volunteer (name, role, team,
+  location, and similar) and emit them in session_context_update under
+  stable keys. Do this regardless of the final decision. A correction
+  overwrites the prior value for the affected key.
+
+STEP 3 — REWRITE (does not use DATA CONTEXT)
+  Output PLAN with rewritten_query: ONE clean natural question, the way a
+  person would ask it. Resolve every implicit reference using the
+  conversation history and SESSION CONTEXT. If the user asked about more
+  than one thing, preserve every part. The downstream Planner receives no
+  conversation history, so the question must stand completely on its own.
+
+  The query is natural language. Do not mention sources, tables, records,
+  documents, or files. Do not use procedural wording such as "retrieve",
+  "provide", "lookup", "if available", or "otherwise". Do not instruct the
+  system what to do on failure. Write the question the way a user would
+  type it.
+
+Additional rules
   - Post-clarification confirmations ("yes", "right", "correct") must
-    reconstruct the original concrete question using the clarified entity,
-    NEVER echo the clarification itself as the rewritten_query.
-  - DATA CONTEXT is for out-of-scope detection only — never list data
-    sources to the user, and never guess whether an answer exists.
+    reconstruct the original concrete question using the clarified
+    information. Never echo the clarifying question back as the
+    rewritten_query.
+  - You never tell the user that something was not found or does not exist —
+    you do not know what the data holds.
 
 Respond with ONLY a JSON object in this exact shape. All fields must be
 present; use empty strings or empty arrays/objects where not applicable:
@@ -416,14 +416,20 @@ async def chat_node(state: AgentState) -> dict:
         synthesizer_output = state.get("synthesizer_output", "")
         if synthesizer_output:
             llm = get_llm("chat")
+            exhaust_system = (
+                "The system could not fully verify an answer. "
+                f"Here is what was found: {synthesizer_output}. "
+                "Write a honest 1-2 sentence response telling the user "
+                "what happened and what was found, even if incomplete. Be direct."
+            )
+            capture_prompt(
+                session_id, 0,
+                "chat", "exhaust",
+                exhaust_system, view["original_query"],
+            )
             exhaust_response = await llm.ainvoke([
-                {"role": "system", "content": (
-                    "The system could not fully verify an answer. "
-                    f"Here is what was found: {synthesizer_output}. "
-                    "Write a honest 1-2 sentence response telling the user "
-                    "what happened and what was found, even if incomplete. Be direct."
-                )},
-                {"role": "user", "content": view["original_query"]},
+                {"role": "system", "content": exhaust_system},
+                {"role": "user",   "content": view["original_query"]},
             ])
             answer = exhaust_response.content.strip()
         else:
@@ -468,6 +474,11 @@ async def chat_node(state: AgentState) -> dict:
         )
 
         llm      = get_llm("chat")
+        capture_prompt(
+            session_id, 0,
+            "chat", "reasoning",
+            _REASONING_SYSTEM_PROMPT, user_message,
+        )
         response = await llm.ainvoke([
             {"role": "system", "content": _REASONING_SYSTEM_PROMPT},
             {"role": "user",   "content": user_message},
@@ -555,6 +566,11 @@ async def chat_node(state: AgentState) -> dict:
     )
 
     llm      = get_llm("chat")
+    capture_prompt(
+        session_id, 0,
+        "chat", "formatter",
+        _DELIVER_SYSTEM_PROMPT, user_message,
+    )
     response = await llm.ainvoke([
         {"role": "system", "content": _DELIVER_SYSTEM_PROMPT},
         {"role": "user",   "content": user_message},
@@ -909,7 +925,11 @@ def test_chat():
     for removed in ("conversation_state", "intent_type", '"fresh"', "post_clarification"):
         assert removed not in system_prompt, \
             f"reasoning system prompt still references removed token {removed!r}"
-    print("PASS: reasoning prompt includes context blocks and drops removed classification tokens")
+    # New purpose-driven framing must be present.
+    for present in ("SCOPE", "CLARITY", "REWRITE"):
+        assert present in system_prompt, \
+            f"reasoning system prompt missing step label {present!r}"
+    print("PASS: reasoning prompt includes context blocks, drops removed tokens, carries Scope/Clarity/Rewrite framing")
 
     # ── Test 13: history truncation — last MAX_REASONING_HISTORY entries only ──
     _reset_sid()
@@ -1048,6 +1068,45 @@ def test_chat():
                 f"{banned!r} — update the fixture to a natural-language question"
             )
     print("PASS: all test-authored PLAN rewrites avoid source/procedural language")
+
+    # ── Test 19: self-reference resolved from SESSION CONTEXT → PLAN ──
+    _reset_sid()
+    update_session_context("test-session-001", {"user_name": "Dan"})
+    self_ref_rewrite = "What is Dan's salary range?"
+    self_ref_json = _reasoning_payload("PLAN", rewritten_query=self_ref_rewrite)
+    self_ref_state = {**base_state, "original_query": "what's my salary range?"}
+    result_self_ref = _run(self_ref_state, _mock_llm(self_ref_json))
+    assert result_self_ref["chat_intent"] == "PLAN"
+    assert "Dan" in result_self_ref["rewritten_query"], \
+        "PLAN rewrite must resolve 'my' using SESSION CONTEXT user_name"
+    print("PASS: self-reference resolvable from SESSION CONTEXT routes as PLAN with resolved name")
+
+    # ── Test 20: self-reference with empty SESSION CONTEXT → CLARIFY ──
+    _reset_sid()
+    unresolved_question = "What is your name?"
+    unresolved_json = _reasoning_payload(
+        "CLARIFY",
+        clarifying_question=unresolved_question,
+    )
+    unresolved_state = {**base_state, "original_query": "what's my salary range?"}
+    result_unresolved = _run(unresolved_state, _mock_llm(unresolved_json))
+    assert result_unresolved["chat_intent"]  == "CLARIFY"
+    assert result_unresolved["final_answer"] == unresolved_question
+    print("PASS: self-reference with empty SESSION CONTEXT routes as CLARIFY asking for identity")
+
+    # ── Test 21: multi-part question → PLAN preserves every part ──
+    _reset_sid()
+    multi_rewrite = "What is Dan Cohen's role and who is his manager?"
+    multi_json = _reasoning_payload("PLAN", rewritten_query=multi_rewrite)
+    multi_state = {
+        **base_state,
+        "original_query": "What is Dan Cohen's role and who does he report to?",
+    }
+    result_multi = _run(multi_state, _mock_llm(multi_json))
+    assert result_multi["chat_intent"] == "PLAN"
+    assert "role"    in result_multi["rewritten_query"].lower()
+    assert "manager" in result_multi["rewritten_query"].lower()
+    print("PASS: multi-part question routes as PLAN preserving every part")
 
     _reset_sid()
     print("\nPASS: all chat tests passed")

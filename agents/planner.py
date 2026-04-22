@@ -17,6 +17,7 @@ import logging
 from core.llm_config import get_llm
 from core.manifest_prefilter import prefilter_manifest, _prefilter_traces
 from core.parse import parse_llm_json
+from core.prompt_capture import capture as capture_prompt
 from core.state import AgentState, Task
 
 logger = logging.getLogger(__name__)
@@ -27,61 +28,65 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
-You are a query planner. Decompose the user's question into tasks. Each task \
-retrieves information from one or more sources listed in the manifest.
+You are a query planner. Decompose the user's question into tasks that
+retrieve the information needed to answer it.
 
-Source selection — IMPORTANT: every source has a kind field. \
-kind=record means the source holds actual entity data and values (e.g. a \
-table of project budgets or employee records). kind=policy means the source \
-holds rules, limits, entitlements, or procedures (e.g. a PDF defining budget \
-limit rules or expense policies). \
-When the question asks about a rule, limit, threshold, or procedure, you MUST \
-route to a kind=policy source. When it asks for a specific entity's actual \
-data or values, route to a kind=record source. \
-Use the contains field to pick the most specific match within the chosen kind. \
-Do not confuse a record source that stores data about a topic with a policy \
-source that defines rules about the same topic.
+STEP 1 — IDENTIFY INFORMATION NEEDED
+  List every distinct piece of information the question requires.
+  Treat each part of a multi-part question as a separate information need.
 
-Routing: assign worker_type by source type in the manifest. PDF sources use \
-"librarian". CSV or SQLite sources use "data_scientist".
+STEP 2 — ASSIGN SOURCES
+  Match each information need to one or more sources from the manifest.
 
-Multi-source tasks: when a task needs data from multiple sources and those \
-sources share the same worker_type, combine them in a single task — \
-source_ids: ["table1", "table2", "table3"]. The worker can query all of \
-them together. This applies to any number of same-type sources: tables that \
-need to be combined, compared, or cross-referenced, or PDFs that need to be \
-searched together. Only split into separate tasks when sources use different \
-worker types (e.g. one PDF and one CSV — these cannot share a runtime) or \
-when the information needed is truly independent.
+  Source selection uses two signals:
+    kind    — "record" sources hold actual entity data and values.
+              "policy" sources hold rules, limits, entitlements, or procedures.
+              Questions about specific entities and their values → record.
+              Questions about rules, limits, or procedures → policy.
+    contains — pick the source whose contains phrases are the most specific
+               match for the information need.
 
-Cross-source relationships: when the manifest lists a CROSS-SOURCE \
-RELATIONSHIPS block, use it to identify which tables share join keys. \
-Prefer combining those tables into a single multi-source task.
+  Worker type follows source type:
+    PDF → librarian.  CSV or SQLite → data_scientist.
 
-Domain context: when the manifest includes a DOMAIN CONTEXT block, treat \
-those rules as ground truth for ordering, ranking, or interpreting \
-categorical values.
+  Cross-source relationships in the manifest identify which sources share
+  join keys. Use them when multiple sources need to be combined.
 
-Dependencies: if a task requires a value that must first be retrieved from \
-another source, create that retrieval as a separate task and set depends_on. \
-If a task can run independently, set depends_on to null. Apply this per entity.
+  Domain context in the manifest provides ground truth for ordering,
+  ranking, or interpreting categorical values. Follow it.
 
-Use the minimum number of tasks. Only use sources from the manifest. \
-Keep justifications to one sentence.
+STEP 3 — BUILD TASKS
+  Group source assignments into the minimum number of tasks:
+    - Same worker_type sources that answer related information needs →
+      combine into one task with multiple source_ids.
+    - Different worker_type sources → separate tasks (they cannot share
+      a runtime).
+    - When one task's output is needed as input to another → separate
+      tasks with depends_on linking them.
 
-Respond with ONLY JSON — no explanation, no markdown:
+  Task descriptions must specify the expected output — what the worker
+  should return — not just the process. If the user asked for multiple
+  pieces of information in one question, the description must list every
+  deliverable explicitly. The worker treats the description as its
+  complete instruction — anything not mentioned will not be returned.
+
+Respond with ONLY JSON:
 {
   "reasoning": {
     "information_needed": ["what facts or rules are needed"],
     "source_assignments": [
-      {"info": "...", "kind_required": "record|policy", "source_ids": ["..."], "worker_type": "...", "justification": "..."}
+      {"info": "...", "kind_required": "record|policy",
+       "source_ids": ["..."], "worker_type": "...",
+       "justification": "one sentence"}
     ],
-    "can_combine": "Before splitting: for source_assignments that share the same worker_type, can they be combined into a single task? If yes, merge them.",
+    "can_combine": "can any source_assignments with the same worker_type
+                    be merged into a single task?",
     "dependencies": ["e.g. t2 needs t1 because ..."]
   },
   "tasks": [
     {"task_id": "t1", "worker_type": "librarian"|"data_scientist",
-     "description": "...", "source_ids": ["..."], "depends_on": null|"t1"}
+     "description": "what the worker should return",
+     "source_ids": ["..."], "depends_on": null|"t1"}
   ]
 }
 """
@@ -155,6 +160,12 @@ async def planner_node(state: AgentState) -> dict:
     )
 
     llm = get_llm("planner").bind(max_tokens=1500)
+    capture_prompt(
+        state.get("session_id", ""),
+        state.get("retry_count", 0) + 1,
+        "planner", "main",
+        _SYSTEM_PROMPT, user_message,
+    )
     response = await llm.ainvoke([
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user",   "content": user_message},

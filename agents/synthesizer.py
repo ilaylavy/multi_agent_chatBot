@@ -19,6 +19,7 @@ import logging
 
 from core.llm_config import get_llm
 from core.parse import parse_llm_json
+from core.prompt_capture import capture as capture_prompt
 from core.state import AgentState, SourceRef
 
 logger = logging.getLogger(__name__)
@@ -208,6 +209,12 @@ async def synthesizer_node(state: AgentState) -> dict:
     )
 
     llm = get_llm("synthesizer")
+    capture_prompt(
+        state.get("session_id", ""),
+        state.get("retry_count", 0) + 1,
+        "synthesizer", "main",
+        _SYSTEM_PROMPT, user_message,
+    )
     response = await llm.ainvoke([
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user",   "content": user_message},
