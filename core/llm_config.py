@@ -142,7 +142,7 @@ def test_llm_config():
     agent_cfg = config["llm"]["agents"]
 
     # ── Test 1: all default (openai) agents return ChatOpenAI ────────
-    agents = ["chat", "planner", "router", "librarian", "data_scientist", "synthesizer", "auditor"]
+    agents = ["chat", "chat_scope", "planner", "router", "librarian", "data_scientist", "synthesizer", "auditor"]
     print(f"{'Agent':<16} {'Provider':<10} {'Model':<12} {'Temperature'}")
     print("-" * 50)
 
@@ -162,7 +162,7 @@ def test_llm_config():
         )
         print(f"{name:<16} {'openai':<10} {llm.model_name:<12} {llm.temperature}")
 
-    print("PASS: all 7 default agents return correctly configured ChatOpenAI instances")
+    print(f"PASS: all {len(agents)} default agents return correctly configured ChatOpenAI instances")
 
     # ── Test 2: agent with provider: openai returns ChatOpenAI ───────
     fake_config_openai = {

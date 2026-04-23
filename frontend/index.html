@@ -878,8 +878,10 @@ function appendAssistantBubble(data, query) {
         <div><strong>Retry count:</strong> ${t.retry_count}</div>
         ${hasAudit ? `<div><strong>Audit verdict:</strong> ${verdict}</div>` : ''}
         ${notes != null ? `<div><strong>Audit notes:</strong> ${notes}</div>` : ''}
+        ${t.retry_target ? `<div><strong>Retry target:</strong> ${esc(t.retry_target)}</div>` : ''}
         ${prefilterHtml}
         ${hasPlan ? `<div><strong>Plan:</strong></div><ol>${planHtml}</ol>` : ''}
+        ${renderScopeResult(t.scope_result)}
         ${renderChatReasoning(t.chat_reasoning)}
         ${renderSessionContext(t.chat_session_context_before, t.chat_session_context_after)}
         ${t.planner_reasoning ? `<details class="retry-attempt" style="margin-top:0.4rem"><summary><strong>Planner Reasoning</strong></summary><div class="retry-attempt-body"><pre style="white-space:pre-wrap;max-height:300px">${esc(t.planner_reasoning)}</pre></div></details>` : ''}
@@ -906,6 +908,7 @@ function appendAssistantBubble(data, query) {
           <div class="retry-attempt-body">
             <div><strong>Verdict:</strong> ${esc(attempt.audit_verdict)}</div>
             <div><strong>Notes:</strong> ${esc(attempt.audit_notes || '—')}</div>
+            ${attempt.retry_target ? `<div><strong>Retry target:</strong> ${esc(attempt.retry_target)}</div>` : ''}
             <div style="margin-top:0.2rem"><strong>Draft:</strong></div>
             <div class="task-output">${esc(attempt.draft_answer || '')}</div>
             ${renderAgentPrompts(attempt.agent_prompts)}
@@ -1176,10 +1179,7 @@ function renderChatReasoning(raw) {
     const r = parsed.reasoning || {};
     const rows = [
       ['Decision',            parsed.decision],
-      ['Conversation state',  r.conversation_state],
       ['User intent',         r.user_intent],
-      ['Intent type',         r.intent_type],
-      ['Gaps',                Array.isArray(r.gaps) ? (r.gaps.length ? r.gaps.join('; ') : '(none)') : r.gaps],
       ['Decision rationale',  r.decision_rationale],
       ['Rewritten query',     parsed.rewritten_query],
       ['Clarifying question', parsed.clarifying_question],
@@ -1200,6 +1200,47 @@ function renderChatReasoning(raw) {
   }
 
   return `<details class="retry-attempt" style="margin-top:0.4rem"><summary><strong>Chat Reasoning</strong></summary><div class="retry-attempt-body">${bodyHtml}</div></details>`;
+}
+
+/**
+ * Render the Chat agent's scope-filter outcome for the current turn.
+ *
+ *   null            → fast-path greeting (or exhaustion / delivery-only),
+ *                     scope call did not fire — render a short "did not fire"
+ *                     line so the trace panel always shows scope status.
+ *   in_scope        → badge; no follow-up copy (reasoning call ran next).
+ *   out_of_scope    → badge + the short friendly reply the scope call
+ *                     returned as final_answer.
+ */
+function renderScopeResult(scopeResult) {
+  if (!scopeResult) {
+    return `<details class="retry-attempt" style="margin-top:0.4rem"><summary><strong>Scope Filter</strong> <em style="color:var(--pico-muted-color);font-size:0.75rem">(not fired)</em></summary>
+      <div class="retry-attempt-body" style="font-size:0.8rem;color:var(--pico-muted-color)">
+        Scope call was skipped this turn — a fast-path greeting or pipeline-exit path handled the message.
+      </div>
+    </details>`;
+  }
+
+  const verdict = scopeResult.scope || 'unknown';
+  const response = scopeResult.response || '';
+  const verdictColor = verdict === 'in_scope'
+    ? '#16a34a'                        // same green as task-badge-ok
+    : (verdict === 'out_of_scope' ? '#dc2626'  // same red as task-badge-err
+                                   : '#6b7280');
+  const badge = `<span class="task-badge" style="background:${verdictColor};color:#fff">${esc(verdict)}</span>`;
+
+  const rows = [
+    ['Verdict',  badge],
+    ['Response', response
+      ? esc(response)
+      : '<em style="color:var(--pico-muted-color)">(empty — reasoning call ran next)</em>'],
+  ];
+  const rowHtml = rows
+    .map(([k, v]) => `<tr><th style="text-align:left;padding-right:0.6rem;vertical-align:top">${esc(k)}</th><td>${v}</td></tr>`)
+    .join('');
+  const bodyHtml = `<table style="font-size:0.8rem">${rowHtml}</table>`;
+
+  return `<details class="retry-attempt" style="margin-top:0.4rem"><summary><strong>Scope Filter</strong> ${badge}</summary><div class="retry-attempt-body">${bodyHtml}</div></details>`;
 }
 
 /**

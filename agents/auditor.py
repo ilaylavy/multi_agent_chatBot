@@ -38,8 +38,9 @@ Check all three of the following:
      answer, directly or through a dependent task.
   2. ACCURACY — every factual claim in the draft must match the task results.
      Compare specific values (numbers, categories, dates) in the draft against
-     the corresponding task result output. If a value does not match, note:
-     "Value mismatch: task result shows [actual] but draft states [claimed]."
+     the corresponding task result output. If a value does not match, describe
+     the mismatch STRUCTURALLY — identify the field or claim that is wrong,
+     without quoting the actual or expected values themselves.
      A claim is also acceptable if it follows logically from a chain of task
      results, even without explicit source attribution in the text.
   3. NO UNSUPPORTED ASSERTIONS — the draft does not assert anything that cannot
@@ -49,11 +50,35 @@ Verdict rules:
   - PASS: all three checks pass. Notes must briefly confirm.
   - FAIL: one or more checks fail. Notes must describe exactly what is wrong.
 
+CRITICAL — Notes sanitization:
+  Notes must NEVER include specific data values from the task results
+  (numbers, names, dates, amounts, categories, identifiers). Describe what
+  is wrong STRUCTURALLY — which field is off, which task's result the draft
+  misused, which entity the claim concerns — without quoting the value.
+    - Bad:  "task result shows ... but draft states no limit"
+    - Good: "the draft omits a reimbursement limit that is present in the
+             task result for the relevant entity"
+  Why: the Synthesizer reads these notes as retry feedback. If you embed
+  concrete values, the Synthesizer treats your notes as a data source
+  instead of the task results, which causes accuracy drift on retry.
+
+Retry routing (required when verdict is FAIL):
+  Choose retry_target based on WHERE the failure originates:
+    "synthesizer" — the task results contain the information needed to
+                    answer correctly, but the draft misused, omitted, or
+                    misrepresented it. Same task results go back to the
+                    Synthesizer — no re-retrieval.
+    "planner"     — the task results themselves are incomplete, wrong, or
+                    missing information that should have been retrieved.
+                    The plan needs to change or workers need to re-run.
+  When verdict is PASS, set retry_target to null.
+
 Respond with ONLY JSON — no explanation, no markdown:
 {
   "verdict":       "PASS" | "FAIL",
-  "notes":         "brief confirmation if PASS, specific description of issues if FAIL",
-  "failed_checks": []
+  "notes":         "brief confirmation if PASS, structural description if FAIL (no data values)",
+  "failed_checks": [],
+  "retry_target":  "planner" | "synthesizer" | null
 }
 
 failed_checks: zero or more of "COMPLETENESS", "ACCURACY", "NO_UNSUPPORTED_ASSERTIONS"
@@ -84,10 +109,12 @@ DRAFT ANSWER:
 def auditor_view(state: AgentState) -> dict:
     """
     Returns only the fields the Auditor's LLM prompt may see.
+    When rewritten_query is non-empty it takes precedence over original_query so
+    the Auditor verifies against the context-enriched version of the question.
     Does NOT include conversation_history, retry_count, or retry_notes.
     """
     return {
-        "original_query": state["original_query"],
+        "original_query": state.get("rewritten_query") or state["original_query"],
         "plan":           state["plan"],
         "task_results":   state["task_results"],
         "draft_answer":   state["draft_answer"],
@@ -167,6 +194,15 @@ async def auditor_node(state: AgentState) -> dict:
             f"Missing key in LLM output: {exc}\nRaw output: {response.content}"
         ) from exc
 
+    # retry_target: planner (default) | synthesizer on FAIL; None on PASS.
+    raw_target = data.get("retry_target")
+    if verdict == "PASS":
+        retry_target = None
+    elif raw_target in ("planner", "synthesizer"):
+        retry_target = raw_target
+    else:
+        retry_target = "planner"
+
     logger.debug(
         "[%s] Auditor — verdict=%s notes=%s attempt=%d",
         state.get("session_id", "?"),
@@ -186,6 +222,7 @@ async def auditor_node(state: AgentState) -> dict:
         "draft_answer":   view["draft_answer"],
         "audit_verdict":  verdict,
         "audit_notes":    notes,
+        "retry_target":   retry_target,
         "agent_prompts":  get_prompts_for_attempt(
             state.get("session_id", ""), attempt_index,
         ),
@@ -193,17 +230,17 @@ async def auditor_node(state: AgentState) -> dict:
 
     if verdict == "PASS":
         return {
-            "audit_result":  AuditResult(verdict="PASS", notes=notes),
+            "audit_result":  AuditResult(verdict="PASS", notes=notes, retry_target=None),
             "final_answer":  view["draft_answer"],
             "final_sources": view["sources_used"],
             "retry_history": history,
         }
 
-    # FAIL — increment retry_count and write notes for the Planner
-    # Routing (→ Planner or → Chat on exhaustion) is handled by graph.py,
-    # not here. The Auditor only writes state.
+    # FAIL — increment retry_count and write notes for the next agent.
+    # Routing (→ Planner, → Synthesizer, or → Chat on exhaustion) is handled
+    # by graph.py via retry_target — the Auditor only writes state.
     return {
-        "audit_result":  AuditResult(verdict="FAIL", notes=notes),
+        "audit_result":  AuditResult(verdict="FAIL", notes=notes, retry_target=retry_target),
         "retry_count":   state["retry_count"] + 1,  # control logic only — not passed to LLM prompt, intentional view exception
         "retry_notes":   notes,
         "retry_history": history,
@@ -250,6 +287,8 @@ def test_auditor():
     assert result_pass["audit_result"]["verdict"] == "PASS"
     assert result_pass["audit_result"]["notes"]   == pass_notes, \
         "PASS notes must carry the LLM-provided confirmation, not be empty"
+    assert result_pass["audit_result"]["retry_target"] is None, \
+        "PASS verdict must set retry_target to None"
     assert result_pass["final_answer"]  == AUDITOR_STATE_PASS["draft_answer"]
     assert result_pass["final_sources"] is AUDITOR_STATE_PASS["sources_used"]
     assert "retry_count" not in result_pass, "PASS must not touch retry_count"
@@ -272,6 +311,7 @@ def test_auditor():
         "verdict":       "FAIL",
         "notes":         fail_notes,
         "failed_checks": ["ACCURACY", "NO_UNSUPPORTED_ASSERTIONS"],
+        "retry_target":  "synthesizer",
     })
     mock_response.content = fail_llm_output
 
@@ -283,6 +323,10 @@ def test_auditor():
     assert "retry_notes"  in result_fail
     assert result_fail["audit_result"]["verdict"] == "FAIL"
     assert result_fail["audit_result"]["notes"]   == fail_notes
+    assert result_fail["audit_result"]["retry_target"] == "synthesizer", \
+        "FAIL verdict must carry the LLM-provided retry_target"
+    assert result_fail["retry_history"][0]["retry_target"] == "synthesizer", \
+        "retry_history entry must carry retry_target"
     assert result_fail["retry_count"] == AUDITOR_STATE_FAIL["retry_count"] + 1
     assert result_fail["retry_notes"] == fail_notes
     assert "final_answer"  not in result_fail, "FAIL must not set final_answer"
@@ -425,11 +469,12 @@ def test_auditor():
         "draft_answer": "Entity A belongs to category Y.",
     }
 
-    mismatch_notes = "Value mismatch: task result shows category=X but draft states category=Y."
+    mismatch_notes = "The draft asserts a category for Entity A that does not match the task result."
     mismatch_llm_output = json.dumps({
         "verdict":       "FAIL",
         "notes":         mismatch_notes,
         "failed_checks": ["ACCURACY"],
+        # retry_target intentionally omitted — tests default fallback to "planner"
     })
     mock_response.content = mismatch_llm_output
     mock_llm.ainvoke = AsyncMock(return_value=mock_response)
@@ -439,11 +484,13 @@ def test_auditor():
 
     assert result_mismatch["audit_result"]["verdict"] == "FAIL", \
         "Value mismatch must return FAIL verdict"
-    assert "Value mismatch" in result_mismatch["audit_result"]["notes"], \
-        "FAIL notes must describe the value mismatch"
+    assert result_mismatch["audit_result"]["notes"] == mismatch_notes, \
+        "FAIL notes must describe the value mismatch structurally"
+    assert result_mismatch["audit_result"]["retry_target"] == "planner", \
+        "Missing retry_target must default to 'planner' on FAIL"
     assert "retry_count" in result_mismatch, "FAIL must increment retry_count"
     assert "final_answer" not in result_mismatch, "FAIL must not set final_answer"
-    print("PASS: value mismatch between task result and draft returns FAIL with ACCURACY")
+    print("PASS: value mismatch with missing retry_target defaults to 'planner'")
 
     print("\nPASS: all auditor tests passed")
 

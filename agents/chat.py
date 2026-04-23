@@ -12,11 +12,13 @@ Four execution paths:
   FAST GREETING     — obvious greetings match a regex; no LLM call.
                       Returns a canned DIRECT response.
 
-  REASON AND ROUTE  — single reasoning LLM call with chain of thought
-                      (understand → assess → act). Extracts stable user
-                      facts into session_context ambiently, independent of
-                      the decision. Produces one of DIRECT, CLARIFY, or
-                      PLAN with a self-contained rewritten query.
+  REASON AND ROUTE  — two LLM calls. First a scope filter (gpt-4.1-nano,
+                      data_context aware) decides whether the message is
+                      in-scope. Out-of-scope short-circuits with a friendly
+                      reply. In-scope proceeds to the reasoning call (no
+                      data_context) which produces DIRECT, CLARIFY, or PLAN
+                      with a self-contained rewritten query and extracts
+                      stable user facts into session_context ambiently.
 
   FORMAT AND DELIVER — final_answer populated by pipeline (audit verdict
                       PASS). LLM reformats the verified answer. Post-format
@@ -25,7 +27,8 @@ Four execution paths:
 View    : original_query, conversation_history, final_answer, final_sources,
           chat_intent, rewritten_query
 Returns : { conversation_history, chat_intent, rewritten_query, chat_reasoning }          on PLAN
-          { conversation_history, chat_intent, final_answer, chat_reasoning }              on DIRECT / CLARIFY
+          { conversation_history, chat_intent, final_answer, chat_reasoning }              on DIRECT / CLARIFY from reasoning
+          { conversation_history, chat_intent, final_answer }                              on out-of-scope short-circuit
           { conversation_history, final_answer }                                            on FORMAT or EXHAUSTION
 """
 
@@ -41,6 +44,7 @@ from core.data_context import get_data_context
 from core.llm_config import _load_config, get_llm
 from core.parse import parse_llm_json
 from core.prompt_capture import capture as capture_prompt
+from core.scope_result import set_scope_result
 from core.session_context import get_session_context, update_session_context
 from core.state import AgentState, Message
 
@@ -60,48 +64,89 @@ MAX_REASONING_HISTORY: int = _chat_cfg.get("max_reasoning_history", 12)
 
 
 # ---------------------------------------------------------------------------
-# Prompt templates — single reasoning call
+# Prompt templates — scope filter (first call)
+# ---------------------------------------------------------------------------
+
+_SCOPE_SYSTEM_PROMPT = """\
+You are a scope filter. You receive a user message and a description of what
+data this system covers. Your only job: should this message be processed
+further, or is it clearly outside the system's scope?
+
+Return in_scope for:
+  - Any question that relates to the topics described in DATA CONTEXT
+  - Any message where the user provides information about themselves
+  - Any message that includes a data question, even if mixed with other
+    content
+  - Any statement or question you are unsure about
+
+Return out_of_scope for:
+  - Questions clearly and unambiguously outside every topic described in
+    DATA CONTEXT — judge only by comparing the message to DATA CONTEXT,
+    not by your own knowledge of what topics exist
+  - Pure chit-chat with no personal content and no data question
+
+When in doubt, always return in_scope. A false in_scope is cheap. A false
+out_of_scope means the system ignores the user.
+
+Respond with ONLY JSON:
+{
+  "scope": "in_scope" | "out_of_scope",
+  "response": "short friendly reply when out_of_scope, empty string when in_scope"
+}
+"""
+
+_SCOPE_USER_TEMPLATE = """\
+DATA CONTEXT:
+{data_context}
+
+USER MESSAGE:
+{original_query}
+"""
+
+
+# ---------------------------------------------------------------------------
+# Prompt templates — reasoning call (second call)
 # ---------------------------------------------------------------------------
 
 _REASONING_SYSTEM_PROMPT = """\
-You are the entry agent of a data-answering system. Your job is simple: turn
-the human conversation in front of you into a single clear question that a
-downstream system with no conversation memory can answer. You know about
-conversation. You know nothing about data.
+You are the entry agent of a data-answering system. You turn human
+conversation into a single clear question that a downstream system with no
+conversation memory can answer.
 
-Work through three steps in order. Return ONE JSON object matching the schema
-at the end — the schema, not prose.
+You see conversation history and session context. You do NOT see any
+description of what data exists — you know nothing about the data. Your
+only concern is the conversation.
 
-STEP 1 — SCOPE (this step uses DATA CONTEXT)
-  DATA CONTEXT is a short paragraph describing what this system covers. Read
-  the user's current message and decide whether it is a question inside that
-  scope, or something else — a greeting, chit-chat, an identity statement, a
-  comment without a question, or an ask outside scope.
-    → If it is not an in-scope data question, output DIRECT with a short,
-      friendly direct_response, and stop. No other step uses DATA CONTEXT.
+STEP 1 — UNDERSTAND AND EXTRACT
+  What does the user want?
+  Scan their message for any self-identifying facts they volunteer and
+  emit them in session_context_update under stable keys (user_name,
+  department, role). Corrections overwrite prior values. Do this on
+  every turn regardless of the decision you reach.
 
-STEP 2 — CLARITY (does not use DATA CONTEXT)
-  If the message is a data question, ask one thing: do I know who or what
-  the user is asking about? Use the conversation history and SESSION CONTEXT
-  (stable facts the user has volunteered earlier) to resolve anything the
-  message leaves implicit. The subject is known when it is stated outright,
-  carried forward from a recent turn, or present in SESSION CONTEXT.
-    → If the subject is identifiable, continue to Step 3.
-    → If the subject is genuinely unidentifiable, output CLARIFY with ONE
-      specific clarifying_question targeting exactly what is missing.
+STEP 2 — DECIDE
+  Pick exactly one:
 
-  Clarity is only about the conversation. It is never about whether the data
-  covers the question, whether the answer exists, or whether a lookup or
-  intermediate step would be needed — that is the downstream Planner's job,
-  not yours. If the subject is known, the question is clear, full stop.
+  PLAN — the user is asking a question that requires looking up data.
+  Write output as a single natural question that stands completely alone.
+  Resolve every reference from conversation history and session context.
+  Preserve every part of a multi-part question. Do not mention sources,
+  tables, records, documents, or files. Do not use procedural language.
+  Write it the way a person would ask the question.
 
-  Ambient session-context extraction. On every turn, scan the user's message
-  for stable self-identifying facts they volunteer (name, role, team,
-  location, and similar) and emit them in session_context_update under
-  stable keys. Do this regardless of the final decision. A correction
-  overwrites the prior value for the affected key.
+  CLARIFY — the user is asking a data question but you cannot identify
+  who or what it is about. The only valid reason: an unresolved "my" or
+  "I" with no name in session context, or a pronoun with no clear
+  referent. Write output as one short question targeting exactly what
+  is missing. Never clarify about scope, detail level, or preferences.
+  If the previous assistant turn was a clarification, treat the user's
+  response as an answer and move to PLAN — never clarify twice in a row.
 
-STEP 3 — REWRITE (does not use DATA CONTEXT)
+  DIRECT — anything other than a data question: greetings, identity
+  statements, conversation, statements without a question, corrections
+  to personal info. Write output as a short response.
+
+STEP 3 — REWRITE (PLAN only)
   Output PLAN with rewritten_query: ONE clean natural question, the way a
   person would ask it. Resolve every implicit reference using the
   conversation history and SESSION CONTEXT. If the user asked about more
@@ -121,13 +166,11 @@ Additional rules
     rewritten_query.
   - You never tell the user that something was not found or does not exist —
     you do not know what the data holds.
-
-Respond with ONLY a JSON object in this exact shape. All fields must be
-present; use empty strings or empty arrays/objects where not applicable:
+  - you can only respond with **one** of (rewritten_query, clarifying_question, direct_response) depending on the decision.
+Respond with ONLY JSON:
 {
   "reasoning": {
     "user_intent":         "one sentence",
-    "gaps":                [],
     "decision_rationale":  "one sentence"
   },
   "decision":                "PLAN|CLARIFY|DIRECT",
@@ -139,7 +182,7 @@ present; use empty strings or empty arrays/objects where not applicable:
 """
 
 _REASONING_USER_TEMPLATE = """\
-{data_context_block}{session_context_block}{history_block}CURRENT USER MESSAGE:
+{session_context_block}{history_block}CURRENT USER MESSAGE:
 {original_query}
 """
 
@@ -267,12 +310,6 @@ def _format_session_context_block(ctx: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _format_data_context_block(data_context: str) -> str:
-    if not data_context:
-        return ""
-    return f"DATA CONTEXT:\n{data_context}\n\n"
-
-
 # Negation phrases the formatter must never introduce on its own.
 _NEGATION_PATTERNS: tuple[str, ...] = (
     "not found",
@@ -325,7 +362,6 @@ def _fallback_reasoning(original_query: str, raw: str | None = None) -> dict:
     return {
         "reasoning": {
             "user_intent":         "fallback — reasoning call failed to return parseable JSON",
-            "gaps":                [],
             "decision_rationale":  "Parse failure — default to PLAN with original query.",
         },
         "decision":               "PLAN",
@@ -351,7 +387,6 @@ def _normalize_reasoning(data: dict, original_query: str) -> dict:
     return {
         "reasoning": {
             "user_intent":         reasoning.get("user_intent", "") or "",
-            "gaps":                reasoning.get("gaps", []) or [],
             "decision_rationale":  reasoning.get("decision_rationale", "") or "",
         },
         "decision":               decision,
@@ -401,6 +436,13 @@ def _try_fast_classify(query: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Out-of-scope fallback
+# ---------------------------------------------------------------------------
+
+_OUT_OF_SCOPE_FALLBACK = "I can help with questions about your company data."
+
+
+# ---------------------------------------------------------------------------
 # Node function
 # ---------------------------------------------------------------------------
 
@@ -447,7 +489,7 @@ async def chat_node(state: AgentState) -> dict:
 
     # ── Path 2: REASON AND ROUTE ──────────────────────────────────
     if not final_answer:
-        # Fast path — skip LLM for obvious greetings
+        # Fast path — skip both LLM calls for obvious greetings
         fast_response = _try_fast_classify(view["original_query"])
         if fast_response is not None:
             updated_history = _append_messages(
@@ -461,13 +503,64 @@ async def chat_node(state: AgentState) -> dict:
                 "final_answer":         fast_response,
             }
 
-        # Build the three context blocks the reasoning prompt expects
-        data_context_block    = _format_data_context_block(get_data_context())
+        # Step A: scope filter call — sees DATA CONTEXT, not conversation.
+        scope_user_message = _SCOPE_USER_TEMPLATE.format(
+            data_context=get_data_context(),
+            original_query=view["original_query"],
+        )
+        scope_llm = get_llm("chat_scope")
+        capture_prompt(
+            session_id, 0,
+            "chat", "scope",
+            _SCOPE_SYSTEM_PROMPT, scope_user_message,
+        )
+        scope_response = await scope_llm.ainvoke([
+            {"role": "system", "content": _SCOPE_SYSTEM_PROMPT},
+            {"role": "user",   "content": scope_user_message},
+        ])
+
+        scope_verdict = "in_scope"
+        scope_reply   = ""
+        try:
+            scope_data   = parse_llm_json(scope_response.content)
+            raw_scope    = (scope_data.get("scope") or "").strip().lower()
+            scope_verdict = raw_scope if raw_scope in ("in_scope", "out_of_scope") else "in_scope"
+            scope_reply   = (scope_data.get("response") or "").strip()
+        except ValueError as exc:
+            logger.warning(
+                "[%s] scope parse failed — defaulting to in_scope. Raw: %s",
+                session_id, str(scope_response.content)[:200],
+            )
+
+        # Persist the scope outcome so api.py can surface it in the trace.
+        # Written only on paths that actually made the scope call — the fast
+        # greeting short-circuits above and therefore leaves scope_result unset
+        # (api.py clears the store at the start of every /chat request).
+        set_scope_result(session_id, scope_verdict, scope_reply)
+
+        logger.debug(
+            "[%s] Chat scope — verdict=%s has_reply=%s",
+            session_id, scope_verdict, bool(scope_reply),
+        )
+
+        if scope_verdict == "out_of_scope":
+            response_text = scope_reply or _OUT_OF_SCOPE_FALLBACK
+            updated_history = _append_messages(
+                view["conversation_history"],
+                view["original_query"],
+                response_text,
+            )
+            return {
+                "conversation_history": updated_history,
+                "chat_intent":          "DIRECT",
+                "final_answer":         response_text,
+            }
+
+        # Step B: reasoning call — sees session context + history, NOT data_context.
         session_context_block = _format_session_context_block(get_session_context(session_id))
         history_block         = _format_history_block(view["conversation_history"])
 
         user_message = _REASONING_USER_TEMPLATE.format(
-            data_context_block=data_context_block,
             session_context_block=session_context_block,
             history_block=history_block,
             original_query=view["original_query"],
@@ -609,6 +702,7 @@ async def chat_node(state: AgentState) -> dict:
 def test_chat():
     from unittest.mock import AsyncMock, MagicMock, patch
 
+    from core.scope_result import clear_scope_result, get_scope_result
     from core.session_context import clear_session_context
     from tests.fixtures import CHAT_AGENT_STATE
 
@@ -647,13 +741,11 @@ def test_chat():
         clarifying_question="",
         session_context_update=None,
         user_intent="",
-        gaps=None,
     ):
         import json as _json
         return _json.dumps({
             "reasoning": {
                 "user_intent":        user_intent or f"user requested {decision.lower()}",
-                "gaps":               gaps or [],
                 "decision_rationale": f"selected {decision}",
             },
             "decision":               decision,
@@ -663,24 +755,49 @@ def test_chat():
             "session_context_update": session_context_update or {},
         })
 
-    def _mock_llm(json_str: str) -> MagicMock:
+    def _scope_payload(scope: str, response: str = "") -> str:
+        import json as _json
+        return _json.dumps({"scope": scope, "response": response})
+
+    def _mock_llm_from_content(content: str) -> MagicMock:
         resp = MagicMock()
-        resp.content = json_str
+        resp.content = content
         llm = MagicMock()
         llm.ainvoke = AsyncMock(return_value=resp)
         return llm
 
+    # In-scope scope reply, caller supplies the reasoning JSON.
+    # Returns (selector_fn, scope_llm_mock, chat_llm_mock) for fine-grained assertions.
+    def _mock_llms(reasoning_json: str, scope_json: str | None = None):
+        scope_llm = _mock_llm_from_content(
+            scope_json or _scope_payload("in_scope", "")
+        )
+        chat_llm = _mock_llm_from_content(reasoning_json)
+
+        def selector(agent_name):
+            return scope_llm if agent_name == "chat_scope" else chat_llm
+
+        return selector, scope_llm, chat_llm
+
     # Every reasoning-path test runs with data_context mocked — otherwise the
     # module tries to load the real manifest on disk.
-    def _run(state: dict, llm, sid: str = "test-session-001") -> dict:
+    def _run(state: dict, selector, sid: str = "test-session-001") -> dict:
         state = {**state, "session_id": sid}
         with patch(data_ctx_patch, return_value=fake_data_context), \
-             patch(patch_target, return_value=llm):
+             patch(patch_target, side_effect=selector):
             return asyncio.run(chat_node(state))
 
-    # Ensure a clean session_context between tests
+    # Convenience: run with a single-mock selector (same LLM for every agent).
+    # Used by paths that never hit the scope call (exhaustion, delivery, fast greet).
+    def _run_single(state: dict, llm, sid: str = "test-session-001") -> dict:
+        def selector(_agent_name):
+            return llm
+        return _run(state, selector, sid)
+
+    # Ensure a clean session_context + scope_result between tests
     def _reset_sid(sid: str = "test-session-001") -> None:
         clear_session_context(sid)
+        clear_scope_result(sid)
 
     # ── Test 1: chat_view exposes only the permitted fields ───────
     view = chat_view(CHAT_AGENT_STATE)
@@ -693,21 +810,28 @@ def test_chat():
         assert forbidden not in view, f"chat_view leaked {forbidden}"
     print("PASS: chat_view exposes only permitted fields; hides chat_reasoning from its own prompt")
 
-    # ── Test 2: DIRECT — LLM answers immediately, no pipeline ─────
+    # ── Test 2: DIRECT — reasoning call answers; both LLMs invoked ─
     _reset_sid()
-    direct_response = "I can help with questions about your company data. What would you like to know?"
+    direct_response = "Nice to hear from you. Ask me anything about your data."
     direct_json = _reasoning_payload("DIRECT", direct_response=direct_response)
 
-    direct_state = {**base_state, "original_query": "What can you do?"}
-    result_direct = _run(direct_state, _mock_llm(direct_json))
+    direct_state = {**base_state, "original_query": "I'm just saying hi from Engineering"}
+    selector, scope_llm, chat_llm = _mock_llms(direct_json)
+    result_direct = _run(direct_state, selector)
 
     assert result_direct["chat_intent"]   == "DIRECT"
     assert result_direct["final_answer"]  == direct_response
-    assert "chat_reasoning" in result_direct, "DIRECT must write chat_reasoning"
+    assert "chat_reasoning" in result_direct, "DIRECT from reasoning must write chat_reasoning"
     assert "rewritten_query" not in result_direct, "DIRECT must not write rewritten_query"
+    scope_llm.ainvoke.assert_awaited_once()
+    chat_llm.ainvoke.assert_awaited_once()
+    # Scope call persists its verdict in the scope_result store for the trace.
+    sr = get_scope_result("test-session-001")
+    assert sr == {"scope": "in_scope", "response": ""}, \
+        f"scope_result must record in_scope for this path; got {sr!r}"
     hist = result_direct["conversation_history"]
     assert hist[-1] == {"role": "assistant", "content": direct_response}
-    print("PASS: DIRECT writes final_answer + chat_reasoning; no rewritten_query")
+    print("PASS: DIRECT from reasoning writes final_answer + chat_reasoning; scope_result records in_scope verdict")
 
     # ── Test 3: CLARIFY ───────────────────────────────────────────
     _reset_sid()
@@ -715,10 +839,9 @@ def test_chat():
     clar_json = _reasoning_payload(
         "CLARIFY",
         clarifying_question=clar_question,
-        gaps=["ambiguous entity 'Noa'"],
     )
-    result_clar = _run({**base_state, "original_query": "Can Noa fly Business Class?"},
-                       _mock_llm(clar_json))
+    selector, _, _ = _mock_llms(clar_json)
+    result_clar = _run({**base_state, "original_query": "Can Noa fly Business Class?"}, selector)
     assert result_clar["chat_intent"]  == "CLARIFY"
     assert result_clar["final_answer"] == clar_question
     assert "chat_reasoning" in result_clar
@@ -739,7 +862,8 @@ def test_chat():
             {"role": "assistant", "content": "Yes, Noa holds clearance level A."},
         ],
     }
-    result_plan = _run(plan_state, _mock_llm(plan_json))
+    selector, _, _ = _mock_llms(plan_json)
+    result_plan = _run(plan_state, selector)
     assert result_plan["chat_intent"]     == "PLAN"
     assert result_plan["rewritten_query"] == rewritten
     assert "chat_reasoning" in result_plan
@@ -748,9 +872,8 @@ def test_chat():
 
     # ── Test 5: reasoning parse failure falls back to PLAN ────────
     _reset_sid()
-    bad_resp = MagicMock(); bad_resp.content = "not valid json at all"
-    bad_llm  = MagicMock(); bad_llm.ainvoke = AsyncMock(return_value=bad_resp)
-    result_bad = _run(base_state, bad_llm)
+    selector, _, _ = _mock_llms("not valid json at all")
+    result_bad = _run(base_state, selector)
     assert result_bad["chat_intent"]     == "PLAN"
     assert result_bad["rewritten_query"] == base_state["original_query"]
     assert "chat_reasoning" in result_bad
@@ -763,7 +886,8 @@ def test_chat():
         direct_response="Nice to meet you, Dan. Ask me anything about your data.",
         session_context_update={"user_name": "Dan", "department": "Engineering"},
     )
-    _run({**base_state, "original_query": "my name is Dan, I'm in Engineering"}, _mock_llm(id_json))
+    selector, _, _ = _mock_llms(id_json)
+    _run({**base_state, "original_query": "my name is Dan, I'm in Engineering"}, selector)
     ctx_after = get_session_context("test-session-001")
     assert ctx_after.get("user_name")  == "Dan"
     assert ctx_after.get("department") == "Engineering"
@@ -775,7 +899,8 @@ def test_chat():
         direct_response="Got it, Noa.",
         session_context_update={"user_name": "Noa"},
     )
-    _run({**base_state, "original_query": "actually I'm Noa, not Dan"}, _mock_llm(correction_json))
+    selector, _, _ = _mock_llms(correction_json)
+    _run({**base_state, "original_query": "actually I'm Noa, not Dan"}, selector)
     ctx_corrected = get_session_context("test-session-001")
     assert ctx_corrected.get("user_name")  == "Noa",         "correction must overwrite user_name"
     assert ctx_corrected.get("department") == "Engineering", "unchanged keys must survive"
@@ -785,10 +910,16 @@ def test_chat():
     _reset_sid()
     mock_llm_exhaust = MagicMock(); mock_llm_exhaust.ainvoke = AsyncMock()
     exh_state = {**base_state, "retry_count": _MAX_ATTEMPTS, "synthesizer_output": ""}
-    result_exh = _run(exh_state, mock_llm_exhaust)
+    result_exh = _run_single(exh_state, mock_llm_exhaust)
     mock_llm_exhaust.ainvoke.assert_not_called()
     assert result_exh["final_answer"] == _FAILURE_MESSAGE
-    print("PASS: exhaustion without synthesizer_output returns _FAILURE_MESSAGE, no LLM call")
+    # Exhaustion path does not run the scope call in this chat_node invocation.
+    # (The entry invocation from earlier in the /chat run might have — that
+    # value would remain in the store. Here we asserted _reset_sid first, so
+    # the store starts empty and remains empty.)
+    assert get_scope_result("test-session-001") is None, \
+        "exhaustion path must not write scope_result"
+    print("PASS: exhaustion without synthesizer_output returns _FAILURE_MESSAGE, no LLM call, scope_result untouched")
 
     # ── Test 7b: retry exhaustion with synthesizer_output → LLM composes partial ──
     _reset_sid()
@@ -800,22 +931,26 @@ def test_chat():
         "retry_count":        _MAX_ATTEMPTS,
         "synthesizer_output": "Noa holds clearance level A per the employees table.",
     }
-    result_exh2 = _run(exh_state2, partial_llm)
+    result_exh2 = _run_single(exh_state2, partial_llm)
     assert result_exh2["final_answer"] == partial
     print("PASS: exhaustion with synthesizer_output calls LLM and returns partial answer")
 
-    # ── Test 8: fast greeting — no LLM call ───────────────────────
+    # ── Test 8: fast greeting — no LLM call at all ────────────────
     _reset_sid()
     fast_llm = MagicMock(); fast_llm.ainvoke = AsyncMock()
     for greeting in ("hi", "hello", "Hey!", "thanks", "bye"):
-        result_fast = _run({**base_state, "original_query": greeting}, fast_llm)
+        result_fast = _run_single({**base_state, "original_query": greeting}, fast_llm)
         assert result_fast["chat_intent"]  == "DIRECT"
         assert result_fast["final_answer"]
         assert "chat_reasoning" not in result_fast, "fast path should not emit reasoning"
+        # Fast greeting short-circuits before the scope call — the scope_result
+        # store must stay empty so the trace shows scope_result=None downstream.
+        assert get_scope_result("test-session-001") is None, \
+            "fast greeting must not write scope_result"
     fast_llm.ainvoke.assert_not_called()
-    print("PASS: fast greeting path returns DIRECT without any LLM call")
+    print("PASS: fast greeting path returns DIRECT without any LLM call and leaves scope_result unset")
 
-    # ── Test 9: delivery path ─ audit PASS ─── uses rewritten_query + recent history ──
+    # ── Test 9: delivery path — audit PASS — uses rewritten_query + recent history ──
     _reset_sid()
     audited_draft = "Yes. Noa holds clearance level A, which entitles her to Business Class on flights over 4 hours."
     formatted     = "Noa has clearance level A and is entitled to Business Class on flights over 4 hours."
@@ -837,7 +972,7 @@ def test_chat():
         "final_answer":    audited_draft,
         "audit_result":    {"verdict": "PASS", "notes": "Verified."},
     }
-    result_deliver = _run(deliver_state, deliver_llm)
+    result_deliver = _run_single(deliver_state, deliver_llm)
     assert set(result_deliver.keys()) == {"conversation_history", "final_answer"}
     assert result_deliver["final_answer"] == formatted
     system_msg = next(m["content"] for m in captured if m["role"] == "system")
@@ -847,7 +982,11 @@ def test_chat():
     # Formatter must use rewritten_query, not original_query
     assert "Can Noa fly Business Class?" in user_msg
     assert "RECENT CONVERSATION" in user_msg
-    print("PASS: delivery uses rewritten_query + recent history; copyeditor constraints present")
+    # Delivery path does not fire the scope call. The store was reset above,
+    # so it must still be empty after this invocation.
+    assert get_scope_result("test-session-001") is None, \
+        "delivery path must not write scope_result"
+    print("PASS: delivery uses rewritten_query + recent history; copyeditor constraints present; scope_result untouched")
 
     # ── Test 10: formatter polarity safety check ─────────────────
     _reset_sid()
@@ -861,7 +1000,7 @@ def test_chat():
         "audit_result":    {"verdict": "PASS", "notes": "Verified."},
         "rewritten_query": "What is Noa Levi's salary?",
     }
-    result_inv = _run(inv_state, inv_llm)
+    result_inv = _run_single(inv_state, inv_llm)
     assert result_inv["final_answer"] == positive_draft, \
         "Safety check must revert to audited draft on polarity inversion"
     print("PASS: formatter polarity inversion triggers safety check")
@@ -877,7 +1016,7 @@ def test_chat():
         "audit_result":    {"verdict": "PASS", "notes": ""},
         "rewritten_query": "What is Noa Levie's salary?",
     }
-    result_neg = _run(neg_state, neg_llm)
+    result_neg = _run_single(neg_state, neg_llm)
     assert result_neg["final_answer"] == negative_formatted
     print("PASS: legitimate negation in audited draft delivers formatted output")
 
@@ -889,20 +1028,31 @@ def test_chat():
         "final_answer":  "Some answer that should not be delivered.",
         "audit_result":  {"verdict": "FAIL", "notes": "Rejected."},
     }
-    result_bad_audit = _run(bad_state, no_llm)
+    result_bad_audit = _run_single(bad_state, no_llm)
     no_llm.ainvoke.assert_not_called()
     assert result_bad_audit["final_answer"] == _FAILURE_MESSAGE
     print("PASS: delivery with non-PASS audit returns _FAILURE_MESSAGE, no LLM call")
 
-    # ── Test 12: reasoning prompt receives data_context + session_context + history ──
+    # ── Test 12: scope prompt carries DATA CONTEXT; reasoning prompt does NOT ──
     _reset_sid()
-    seen_user_msg: list = []
-    seen_resp = MagicMock()
-    seen_resp.content = _reasoning_payload("PLAN", rewritten_query="What is X?")
-    async def capture_seen(messages):
-        seen_user_msg.extend(messages)
-        return seen_resp
-    seen_llm = MagicMock(); seen_llm.ainvoke = capture_seen
+    seen_scope_msgs: list = []
+    seen_chat_msgs:  list = []
+
+    scope_resp = MagicMock(); scope_resp.content = _scope_payload("in_scope", "")
+    chat_resp  = MagicMock(); chat_resp.content  = _reasoning_payload("PLAN", rewritten_query="What is X?")
+
+    async def capture_scope(messages):
+        seen_scope_msgs.extend(messages)
+        return scope_resp
+    async def capture_chat(messages):
+        seen_chat_msgs.extend(messages)
+        return chat_resp
+
+    scope_llm_capture = MagicMock(); scope_llm_capture.ainvoke = capture_scope
+    chat_llm_capture  = MagicMock(); chat_llm_capture.ainvoke  = capture_chat
+
+    def selector_capture(agent_name):
+        return scope_llm_capture if agent_name == "chat_scope" else chat_llm_capture
 
     # Pre-populate session context
     update_session_context("test-session-001", {"user_name": "Taylor"})
@@ -912,24 +1062,35 @@ def test_chat():
         "original_query": "what is X?",
         "conversation_history": [{"role": "user", "content": "earlier message"}],
     }
-    _run(seen_state, seen_llm)
-    user_prompt = next(m["content"] for m in seen_user_msg if m["role"] == "user")
-    system_prompt = next(m["content"] for m in seen_user_msg if m["role"] == "system")
-    assert "DATA CONTEXT:"                in user_prompt, "reasoning prompt must include DATA CONTEXT block"
-    assert fake_data_context.splitlines()[0] in user_prompt, "data_context content must reach the prompt"
-    assert "SESSION CONTEXT"              in user_prompt, "reasoning prompt must include SESSION CONTEXT block"
-    assert "Taylor"                        in user_prompt, "SESSION CONTEXT must carry prior user_name"
-    assert "CONVERSATION HISTORY"         in user_prompt, "reasoning prompt must include history"
-    assert "CURRENT USER MESSAGE"         in user_prompt
-    # System prompt must not carry the removed classification vocabulary.
-    for removed in ("conversation_state", "intent_type", '"fresh"', "post_clarification"):
-        assert removed not in system_prompt, \
+    _run(seen_state, selector_capture)
+
+    # Scope call should carry data_context and user message
+    scope_system = next(m["content"] for m in seen_scope_msgs if m["role"] == "system")
+    scope_user   = next(m["content"] for m in seen_scope_msgs if m["role"] == "user")
+    assert "scope filter"    in scope_system.lower(), "scope system prompt missing 'scope filter'"
+    assert "DATA CONTEXT:"   in scope_user,           "scope user prompt must include DATA CONTEXT block"
+    assert fake_data_context.splitlines()[0] in scope_user, \
+        "scope user prompt must carry the data_context paragraph"
+    assert "USER MESSAGE:"   in scope_user,           "scope user prompt must include USER MESSAGE block"
+
+    # Reasoning call should carry session_context + history, but NOT data_context
+    chat_system = next(m["content"] for m in seen_chat_msgs if m["role"] == "system")
+    chat_user   = next(m["content"] for m in seen_chat_msgs if m["role"] == "user")
+    assert "DATA CONTEXT"         not in chat_user, \
+        "reasoning prompt must NOT include DATA CONTEXT block"
+    assert "SESSION CONTEXT"      in chat_user, "reasoning prompt must include SESSION CONTEXT block"
+    assert "Taylor"               in chat_user, "SESSION CONTEXT must carry prior user_name"
+    assert "CONVERSATION HISTORY" in chat_user, "reasoning prompt must include history"
+    assert "CURRENT USER MESSAGE" in chat_user
+    # System prompt must not carry removed tokens.
+    for removed in ("gaps", "DATA CONTEXT", '"gaps"'):
+        assert removed not in chat_system, \
             f"reasoning system prompt still references removed token {removed!r}"
-    # New purpose-driven framing must be present.
-    for present in ("SCOPE", "CLARITY", "REWRITE"):
-        assert present in system_prompt, \
+    # New step labels must be present.
+    for present in ("STEP 1", "STEP 2", "STEP 3"):
+        assert present in chat_system, \
             f"reasoning system prompt missing step label {present!r}"
-    print("PASS: reasoning prompt includes context blocks, drops removed tokens, carries Scope/Clarity/Rewrite framing")
+    print("PASS: scope prompt has DATA CONTEXT; reasoning prompt has session+history but no data_context")
 
     # ── Test 13: history truncation — last MAX_REASONING_HISTORY entries only ──
     _reset_sid()
@@ -938,19 +1099,24 @@ def test_chat():
         big_history.append({"role": "user",      "content": f"user-msg-{i}"})
         big_history.append({"role": "assistant", "content": f"asst-msg-{i}"})  # 40 messages total
 
-    cap_user: list = []
-    trunc_resp = MagicMock()
-    trunc_resp.content = _reasoning_payload("PLAN", rewritten_query="What?")
-    async def cap_trunc(messages):
-        cap_user.extend(messages)
-        return trunc_resp
-    trunc_llm = MagicMock(); trunc_llm.ainvoke = cap_trunc
+    selector, _, _ = _mock_llms(_reasoning_payload("PLAN", rewritten_query="What?"))
+    # Wrap selector to capture the reasoning-call user prompt
+    captured_prompts: list = []
+    def selector_cap(agent_name):
+        llm = selector(agent_name)
+        if agent_name != "chat_scope":
+            original = llm.ainvoke
+            async def cap(messages):
+                captured_prompts.extend(messages)
+                return await original(messages)
+            llm.ainvoke = cap
+        return llm
 
-    _run({**base_state, "conversation_history": big_history, "original_query": "What?"}, trunc_llm)
-    user_prompt = next(m["content"] for m in cap_user if m["role"] == "user")
+    _run({**base_state, "conversation_history": big_history, "original_query": "What?"}, selector_cap)
+    user_prompt = next(m["content"] for m in captured_prompts if m["role"] == "user")
     # MAX_REASONING_HISTORY = 12 → last 12 messages. We had 40 → last 12 are
-    # user-msg-14, asst-msg-14, user-msg-15, ..., asst-msg-19. So user-msg-0
-    # must NOT appear, but asst-msg-19 MUST.
+    # user-msg-14, asst-msg-14, ..., asst-msg-19. user-msg-0 MUST NOT appear,
+    # asst-msg-19 MUST.
     assert "user-msg-0"   not in user_prompt
     assert "user-msg-13"  not in user_prompt
     assert "user-msg-14"  in user_prompt
@@ -973,7 +1139,8 @@ def test_chat():
             {"role": "assistant", "content": "Did you mean Noa Levy (not Levi)?"},
         ],
     }
-    result_yes = _run(yes_state, _mock_llm(yes_json))
+    selector, _, _ = _mock_llms(yes_json)
+    result_yes = _run(yes_state, selector)
     assert result_yes["chat_intent"] == "PLAN"
     assert "Noa Levy" in result_yes["rewritten_query"]
     assert "salary"   in result_yes["rewritten_query"].lower()
@@ -987,7 +1154,8 @@ def test_chat():
         session_context_update={"user_name": "Dan", "department": "Engineering"},
     )
     combo_state = {**base_state, "original_query": "I'm Dan from Engineering, what's my salary?"}
-    result_combo = _run(combo_state, _mock_llm(combo_json))
+    selector, _, _ = _mock_llms(combo_json)
+    result_combo = _run(combo_state, selector)
     assert result_combo["chat_intent"]     == "PLAN"
     assert result_combo["rewritten_query"] == "What is Dan's (Engineering) salary?"
     ctx = get_session_context("test-session-001")
@@ -1011,17 +1179,16 @@ def test_chat():
         "audit_result":    {"verdict": "PASS", "notes": "Verified."},
         "rewritten_query": "What is Dan Cohen's salary?",
     }
-    result_plain = _run(plain_state, plain_llm)
+    result_plain = _run_single(plain_state, plain_llm)
     assert "chat_reasoning" not in result_plain, \
         "delivery path must not overwrite chat_reasoning"
     print("PASS: delivery path returns only {conversation_history, final_answer}")
 
-    # ── Test 17: _normalize_reasoning / _fallback_reasoning emit the trimmed schema ──
+    # ── Test 17: _normalize_reasoning / _fallback_reasoning emit trimmed schema ──
     _reset_sid()
     normalized = _normalize_reasoning({
         "reasoning": {
             "user_intent":        "look up a fact",
-            "gaps":               [],
             "decision_rationale": "clear lookup",
         },
         "decision":               "PLAN",
@@ -1030,27 +1197,42 @@ def test_chat():
         "direct_response":        "",
         "session_context_update": {},
     }, "original")
-    assert set(normalized["reasoning"].keys()) == {"user_intent", "gaps", "decision_rationale"}, \
+    assert set(normalized["reasoning"].keys()) == {"user_intent", "decision_rationale"}, \
         f"normalized reasoning has unexpected keys: {normalized['reasoning'].keys()}"
 
     fb = _fallback_reasoning("orig q")
-    assert set(fb["reasoning"].keys()) == {"user_intent", "gaps", "decision_rationale"}, \
+    assert set(fb["reasoning"].keys()) == {"user_intent", "decision_rationale"}, \
         f"fallback reasoning has unexpected keys: {fb['reasoning'].keys()}"
     assert fb["decision"] == "PLAN"
     assert fb["rewritten_query"] == "orig q"
-    print("PASS: reasoning normalize/fallback emit only {user_intent, gaps, decision_rationale}")
+    print("PASS: reasoning normalize/fallback emit only {user_intent, decision_rationale} — no gaps")
+
+    # Defensive: inputs that still carry a 'gaps' key (from stale LLM output or
+    # a serialized payload from before the schema change) must be accepted and
+    # normalized to the trimmed shape without exploding.
+    legacy = _normalize_reasoning({
+        "reasoning": {
+            "user_intent":        "legacy caller still emits gaps",
+            "gaps":               ["something"],
+            "decision_rationale": "ok",
+        },
+        "decision":               "PLAN",
+        "rewritten_query":        "What?",
+        "clarifying_question":    "",
+        "direct_response":        "",
+        "session_context_update": {},
+    }, "original")
+    assert "gaps" not in legacy["reasoning"], \
+        "normalize must drop legacy gaps field from inbound reasoning"
+    print("PASS: _normalize_reasoning drops a legacy 'gaps' key if present")
 
     # ── Test 18: PLAN rewritten_query is natural language, no procedural words ──
-    # Test fixtures we author in this suite must obey the contract the prompt
-    # enforces at runtime. If this ever fails, rewrite the test fixture to
-    # match how a user would actually phrase the question.
     _reset_sid()
     banned_tokens = (
         "source", "table", "record", "document", "file",
         "retrieve", "provide", "lookup", "if available", "otherwise",
     )
     clean_queries_seen: list[str] = []
-    # Collect every rewritten_query authored in _reasoning_payload calls above.
     for q in (
         "What is Dan Cohen's flight class entitlement?",
         "What is the salary range for Noa Levy?",
@@ -1075,7 +1257,8 @@ def test_chat():
     self_ref_rewrite = "What is Dan's salary range?"
     self_ref_json = _reasoning_payload("PLAN", rewritten_query=self_ref_rewrite)
     self_ref_state = {**base_state, "original_query": "what's my salary range?"}
-    result_self_ref = _run(self_ref_state, _mock_llm(self_ref_json))
+    selector, _, _ = _mock_llms(self_ref_json)
+    result_self_ref = _run(self_ref_state, selector)
     assert result_self_ref["chat_intent"] == "PLAN"
     assert "Dan" in result_self_ref["rewritten_query"], \
         "PLAN rewrite must resolve 'my' using SESSION CONTEXT user_name"
@@ -1089,7 +1272,8 @@ def test_chat():
         clarifying_question=unresolved_question,
     )
     unresolved_state = {**base_state, "original_query": "what's my salary range?"}
-    result_unresolved = _run(unresolved_state, _mock_llm(unresolved_json))
+    selector, _, _ = _mock_llms(unresolved_json)
+    result_unresolved = _run(unresolved_state, selector)
     assert result_unresolved["chat_intent"]  == "CLARIFY"
     assert result_unresolved["final_answer"] == unresolved_question
     print("PASS: self-reference with empty SESSION CONTEXT routes as CLARIFY asking for identity")
@@ -1102,11 +1286,69 @@ def test_chat():
         **base_state,
         "original_query": "What is Dan Cohen's role and who does he report to?",
     }
-    result_multi = _run(multi_state, _mock_llm(multi_json))
+    selector, _, _ = _mock_llms(multi_json)
+    result_multi = _run(multi_state, selector)
     assert result_multi["chat_intent"] == "PLAN"
     assert "role"    in result_multi["rewritten_query"].lower()
     assert "manager" in result_multi["rewritten_query"].lower()
     print("PASS: multi-part question routes as PLAN preserving every part")
+
+    # ── Test 22: out_of_scope short-circuits — reasoning LLM never called ──
+    _reset_sid()
+    oos_reply = "I only answer questions about the ingested company data."
+    scope_llm_oos = _mock_llm_from_content(_scope_payload("out_of_scope", oos_reply))
+    reasoning_llm_oos = MagicMock(); reasoning_llm_oos.ainvoke = AsyncMock()
+
+    def selector_oos(agent_name):
+        return scope_llm_oos if agent_name == "chat_scope" else reasoning_llm_oos
+
+    oos_state = {**base_state, "original_query": "Tell me a joke about cats."}
+    result_oos = _run(oos_state, selector_oos)
+    assert result_oos["chat_intent"]  == "DIRECT"
+    assert result_oos["final_answer"] == oos_reply
+    assert "chat_reasoning" not in result_oos, \
+        "out_of_scope short-circuit must not emit chat_reasoning"
+    scope_llm_oos.ainvoke.assert_awaited_once()
+    reasoning_llm_oos.ainvoke.assert_not_called()
+    # Scope call fired and recorded verdict + friendly reply in scope_result.
+    sr_oos = get_scope_result("test-session-001")
+    assert sr_oos == {"scope": "out_of_scope", "response": oos_reply}, \
+        f"scope_result must record out_of_scope verdict + reply; got {sr_oos!r}"
+    # History gets user + assistant appended
+    hist = result_oos["conversation_history"]
+    assert hist[-2] == {"role": "user", "content": "Tell me a joke about cats."}
+    assert hist[-1] == {"role": "assistant", "content": oos_reply}
+    print("PASS: out_of_scope short-circuits with friendly reply; scope_result captures verdict + response")
+
+    # ── Test 23: out_of_scope with empty 'response' → fallback string ──
+    _reset_sid()
+    scope_llm_empty = _mock_llm_from_content(_scope_payload("out_of_scope", ""))
+    reasoning_llm_empty = MagicMock(); reasoning_llm_empty.ainvoke = AsyncMock()
+
+    def selector_empty(agent_name):
+        return scope_llm_empty if agent_name == "chat_scope" else reasoning_llm_empty
+
+    empty_state = {**base_state, "original_query": "chit chat"}
+    result_empty = _run(empty_state, selector_empty)
+    assert result_empty["chat_intent"]  == "DIRECT"
+    assert result_empty["final_answer"] == _OUT_OF_SCOPE_FALLBACK
+    reasoning_llm_empty.ainvoke.assert_not_called()
+    print("PASS: out_of_scope with empty response falls back to _OUT_OF_SCOPE_FALLBACK")
+
+    # ── Test 24: scope parse failure defaults to in_scope → reasoning call runs ──
+    _reset_sid()
+    bad_scope_llm = _mock_llm_from_content("not json at all")
+    good_reasoning_json = _reasoning_payload("PLAN", rewritten_query="What is the policy?")
+    good_reasoning_llm = _mock_llm_from_content(good_reasoning_json)
+
+    def selector_bad_scope(agent_name):
+        return bad_scope_llm if agent_name == "chat_scope" else good_reasoning_llm
+
+    bad_scope_state = {**base_state, "original_query": "What is the policy?"}
+    result_bad_scope = _run(bad_scope_state, selector_bad_scope)
+    assert result_bad_scope["chat_intent"] == "PLAN"
+    good_reasoning_llm.ainvoke.assert_awaited_once()
+    print("PASS: scope parse failure defaults to in_scope; reasoning call still runs")
 
     _reset_sid()
     print("\nPASS: all chat tests passed")

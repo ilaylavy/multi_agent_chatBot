@@ -40,8 +40,11 @@ llm:
   provider: openai
   agents:
     chat:
-      model: gpt-4.1-nano
+      model: gpt-4.1-mini
       temperature: 0.3
+    chat_scope:
+      model: gpt-4.1-nano
+      temperature: 0.0
     planner:
       model: gpt-4.1-mini
       temperature: 0.0

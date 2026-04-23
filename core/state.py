@@ -54,8 +54,9 @@ class Chunk(TypedDict):
 
 
 class AuditResult(TypedDict):
-    verdict: Literal["PASS", "FAIL"]
-    notes:   str
+    verdict:      Literal["PASS", "FAIL"]
+    notes:        str
+    retry_target: Optional[Literal["planner", "synthesizer"]]  # None on PASS
 
 
 # ---------------------------------------------------------------------------

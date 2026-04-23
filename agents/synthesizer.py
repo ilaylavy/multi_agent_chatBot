@@ -101,10 +101,12 @@ def synthesizer_view(state: AgentState) -> dict:
     Returns only the fields the Synthesizer's LLM prompt may see.
 
     Base fields: original_query, plan, task_results, sources_used.
+    When rewritten_query is non-empty it takes precedence over original_query so
+    the Synthesizer assembles against the context-enriched version of the question.
     On retry (retry_count > 0 AND non-empty retry_notes): also retry_notes + previous_draft.
     """
     view: dict = {
-        "original_query": state["original_query"],
+        "original_query": state.get("rewritten_query") or state["original_query"],
         "plan":           state["plan"],
         "task_results":   state["task_results"],
         "sources_used":   state["sources_used"],

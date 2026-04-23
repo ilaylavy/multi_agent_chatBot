@@ -109,7 +109,7 @@ class AgentState(TypedDict):
     audit_result:         AuditResult      # PASS | FAIL + notes
     retry_count:          int              # Max 3
     retry_notes:          str
-    retry_history:        List[Dict]       # [{attempt, draft_answer, audit_verdict, audit_notes}]
+    retry_history:        List[Dict]       # [{attempt, draft_answer, audit_verdict, audit_notes, retry_target}]
 
     # Output
     final_answer:         str
@@ -149,8 +149,9 @@ class Chunk(TypedDict):
     relevance_score: float
 
 class AuditResult(TypedDict):
-    verdict: Literal["PASS", "FAIL"]
-    notes:   str
+    verdict:      Literal["PASS", "FAIL"]
+    notes:        str
+    retry_target: Optional[Literal["planner", "synthesizer"]]  # None on PASS
 ```
 
 ### Agent Views — Privacy Layer
@@ -182,7 +183,8 @@ Librarian and Data Scientist views take `(state, task, manifest_details)` — th
 
 `route_after_audit(state)` — decides whether to retry or deliver:
 - verdict == PASS → chat_node (format and deliver)
-- verdict == FAIL + retry_count < 3 → planner_node (retry with audit notes)
+- verdict == FAIL + retry_count < 3 + retry_target == "synthesizer" → synthesizer_node (reuse existing task_results, re-draft only)
+- verdict == FAIL + retry_count < 3 + retry_target == "planner" (or unset) → planner_node (full re-plan + re-retrieval)
 - verdict == FAIL + retry_count >= 3 → chat_node (graceful failure message)
 
 **Recursion limit:** 25 (set in `compiled_graph.astream` config).
@@ -193,17 +195,24 @@ Librarian and Data Scientist views take `(state, task, manifest_details)` — th
 Auditor rejects (verdict=FAIL):
   retry_count += 1
   retry_notes = audit notes
+  retry_target = "planner" | "synthesizer"  (set by Auditor LLM)
 
   if retry_count < 3:
-    → Planner (receives retry_notes as context)
-    Full cycle repeats: Planner → Router → Synthesizer → Auditor
+    if retry_target == "synthesizer":
+      → Synthesizer (same task_results reused; retry_notes + previous_draft as context)
+      Partial cycle: Synthesizer → Auditor
+    else:  # "planner" or unset
+      → Planner (receives retry_notes as context)
+      Full cycle: Planner → Router → Synthesizer → Auditor
 
   if retry_count >= 3:
     → Chat Agent (delivers failure message from config.yaml)
     "I could not verify an answer for your question."
 ```
 
-Each retry attempt is recorded in `retry_history` with `{attempt, draft_answer, audit_verdict, audit_notes}`.
+`retry_target` steers the retry: when the task results already contain the information and only the draft needs fixing (wording, omission, unsupported claim), the graph skips Planner and Router and re-runs only the Synthesizer with the existing `task_results`. When the results themselves are wrong or incomplete, the full pipeline re-runs.
+
+Each retry attempt is recorded in `retry_history` with `{attempt, draft_answer, audit_verdict, audit_notes, retry_target}`.
 
 ---
 
@@ -211,24 +220,36 @@ Each retry attempt is recorded in `retry_history` with `{attempt, draft_answer, 
 
 ### Agent 1 — Chat Agent (`agents/chat.py`)
 
-**Job:** Entry/exit point. Reason about intent, extract stable user facts, rewrite queries for context, deliver formatted answers.
+**Job:** Entry/exit point. Filter out-of-scope messages cheaply, reason about intent on in-scope ones, extract stable user facts, rewrite queries for context, deliver formatted answers.
 
-**Model:** `gpt-4.1-nano`, temperature 0.3
+**Models:**
+- `chat_scope` — `gpt-4.1-nano`, temperature 0.0 (scope filter)
+- `chat` — `gpt-4.1-nano`, temperature 0.3 (reasoning, formatter, exhaust composition)
 
-**Prompt philosophy:** A single reasoning call on entry (understand → assess → act); a minimal formatter on exit. No hardcoded domain knowledge — data awareness comes at runtime from `core/data_context.py`.
+**Prompt philosophy:** Two calls on entry, separated by concern. A cheap scope filter that sees only the data-context paragraph and the user message; if it says out-of-scope, the pipeline short-circuits with the scope filter's own friendly reply. Otherwise a reasoning call that sees only conversation history and per-session context — never the data context — runs through understand → extract → decide → rewrite. A minimal formatter handles delivery. No hardcoded domain knowledge anywhere; data awareness is confined to the scope filter and comes at runtime from `core/data_context.py`.
 
 **Four execution paths:**
 
-1. **Retry exhaustion** — `final_answer` empty + `retry_count >= max_attempts`: No reasoning call. If `synthesizer_output` is present, one LLM call composes an honest partial answer; otherwise returns the failure message from config.yaml.
+1. **Retry exhaustion** — `final_answer` empty + `retry_count >= max_attempts`: No scope or reasoning call. If `synthesizer_output` is present, one LLM call composes an honest partial answer; otherwise returns the failure message from config.yaml.
 
 2. **Fast greeting** — Regex match against `^(hi|hello|hey|thanks|bye|goodbye)[\s!.,?]*$` (max 20 chars): No LLM call. Returns a canned response from a hardcoded map. Sets `chat_intent="DIRECT"`.
 
-3. **Reason and route** — Initial entry, `final_answer` empty: One LLM call that performs the full chain of thought. Three stages — **Understand** (one-sentence intent + ambient identity extraction), **Assess** (is this a data lookup or something else; if lookup, what gaps prevent a self-contained rewrite), **Act** (one of DIRECT / CLARIFY / PLAN). No intermediate classification labels. Prompt inputs: conversation history (last `MAX_REASONING_HISTORY` messages, default 12), per-session context from `core/session_context.py`, and the data context paragraph from `core/data_context.py`. Output schema:
+3. **Reason and route** — Initial entry, `final_answer` empty: two LLM calls.
+
+   **Call A — Scope filter** (`chat_scope` model). Inputs: the `data_context` paragraph from `core/data_context.py` and the user message. Nothing else — no history, no session context. Output:
+   ```json
+   {
+     "scope": "in_scope" | "out_of_scope",
+     "response": "short friendly reply when out_of_scope, empty string when in_scope"
+   }
+   ```
+   When `scope == "out_of_scope"`, the pipeline short-circuits: `chat_intent` is set to `DIRECT`, `response` is returned as `final_answer`, and the reasoning call is skipped. The scope filter is deliberately biased toward `in_scope` — ambiguity defers to the reasoning call. Parse failure also defaults to `in_scope`.
+
+   **Call B — Reasoning** (`chat` model). Runs only when scope is `in_scope`. Sees the last `MAX_REASONING_HISTORY` messages (default 12), per-session context from `core/session_context.py`, and the current user message. **Does not see `data_context`** — it is concerned with conversation only. Three ordered steps: **Understand and extract** (one-sentence intent + ambient identity extraction), **Decide** (one of PLAN / CLARIFY / DIRECT), **Rewrite** (PLAN only — a self-contained natural question). Output schema:
    ```json
    {
      "reasoning": {
        "user_intent": "one sentence",
-       "gaps": [],
        "decision_rationale": "one sentence"
      },
      "decision": "PLAN|CLARIFY|DIRECT",
@@ -238,7 +259,7 @@ Each retry attempt is recorded in `retry_history` with `{attempt, draft_answer, 
      "session_context_update": {}
    }
    ```
-   A PLAN `rewritten_query` must be a natural question a person would ask — no references to sources, tables, records, files, or documents, and no procedural language ("retrieve", "provide", "lookup", "if available", "otherwise"). That shape belongs to the Planner. Session context extraction is ambient — any self-identifying facts (name, department, role, team, ID) emitted in `session_context_update` are merged into the session store on every turn, independent of decision. On parse failure, falls back to `decision=PLAN` with `rewritten_query=original_query` and an empty context update.
+   A PLAN `rewritten_query` must be a natural question a person would ask — no references to sources, tables, records, files, or documents, and no procedural language ("retrieve", "provide", "lookup", "fetch"). That shape belongs to the Planner. Session context extraction is ambient — any self-identifying facts (name, department, role, team, ID) emitted in `session_context_update` are merged into the session store on every reasoning-call turn, independent of decision. On parse failure, falls back to `decision=PLAN` with `rewritten_query=original_query` and an empty context update.
 
 4. **Format and deliver** — `final_answer` populated by pipeline: Guards on `audit_result.verdict == "PASS"`. LLM reformats the synthesized answer — removes source attribution phrases, keeps conditions/exceptions, max 2 sentences. Post-format safety check: if the formatter introduces a negation that the audited draft did not contain, deliver the audited draft verbatim.
 
@@ -246,9 +267,10 @@ Each retry attempt is recorded in `retry_history` with `{attempt, draft_answer, 
 
 **Supporting modules:**
 - `core/session_context.py` — module-level dict, keyed by session_id. Stores stable user facts across turns. Not part of AgentState.
-- `core/data_context.py` — thin synchronous reader. Returns the top-level `data_context` paragraph from the manifest index (or a generic fallback when absent). The paragraph itself is produced at ingest time by `ingestion/manifest_writer.py::regenerate_data_context()` and regenerated whenever sources change. Domain-agnostic — the ingest-time prompt forbids naming specific sources, tables, columns, entities, or file types.
+- `core/scope_result.py` — module-level dict, keyed by session_id. Stores the most recent scope-call outcome `{scope, response}` for the turn. Written by `agents/chat.py` immediately after the scope call parses; cleared by `api.py` at the start of every `/chat` request. Read by `api.py` to populate `trace.scope_result`. Absent when the fast greeting regex or a pipeline-exit path (retry exhaustion, format+deliver) short-circuited before the scope call ran.
+- `core/data_context.py` — thin synchronous reader. Returns the top-level `data_context` paragraph from the manifest index (or a generic fallback when absent). The paragraph itself is produced at ingest time by `ingestion/manifest_writer.py::regenerate_data_context()` and regenerated whenever sources change. Domain-agnostic — the ingest-time prompt forbids naming specific sources, tables, columns, entities, or file types. Consumed only by the scope filter call, never by the reasoning call.
 
-**Failure modes:** ValueError from `parse_llm_json` on malformed reasoning output falls back to PLAN+original_query rather than crashing. Fallback canned responses if LLM returns an empty direct/clarifying response.
+**Failure modes:** ValueError from `parse_llm_json` on the scope call falls back to `in_scope` (the reasoning call runs). ValueError on the reasoning call falls back to `PLAN` with `rewritten_query=original_query`. Fallback canned responses if LLM returns an empty direct/clarifying response.
 
 ---
 
@@ -448,20 +470,28 @@ Each retry attempt is recorded in `retry_history` with `{attempt, draft_answer, 
 2. **ACCURACY** — Factual claims match task results. Compares specific values (numbers, categories, dates). Logical chains acceptable — claims derivable from intermediate lookups pass without explicit source attribution.
 3. **NO UNSUPPORTED ASSERTIONS** — Nothing claimed beyond what task results support
 
+**Notes sanitization:** Notes never contain specific data values (numbers, names, dates, amounts, categories, identifiers). They describe *structural* issues — which field, task, or entity is wrong — so the Synthesizer on retry continues to treat `task_results` as the data source rather than extracting values out of the audit notes.
+
+**Retry target:** On FAIL the Auditor also emits `retry_target`:
+- `"synthesizer"` — task results contain the right information; the draft misused, omitted, or misrepresented it. Graph re-runs only the Synthesizer with the same `task_results`.
+- `"planner"` — task results are incomplete/wrong/missing; the plan or workers must re-run.
+On PASS, `retry_target` is `null`. A missing/invalid target on FAIL defaults to `"planner"` to preserve full-pipeline retry behavior.
+
 **Verdict rules:**
-- **PASS:** All three checks pass. Notes briefly confirm. Sets `final_answer = draft_answer`, `final_sources = sources_used`.
-- **FAIL:** One or more checks fail. Notes describe exactly what's wrong. Increments `retry_count`, sets `retry_notes`. Does NOT set `final_answer`.
+- **PASS:** All three checks pass. Notes briefly confirm. Sets `final_answer = draft_answer`, `final_sources = sources_used`, `retry_target = None`.
+- **FAIL:** One or more checks fail. Notes describe structurally what's wrong (no data values). Sets `retry_target`. Increments `retry_count`, sets `retry_notes`. Does NOT set `final_answer`.
 
 **Output schema:**
 ```json
 {
-  "verdict": "PASS" | "FAIL",
-  "notes": "...",
-  "failed_checks": []  // e.g., ["ACCURACY", "COMPLETENESS"]
+  "verdict":       "PASS" | "FAIL",
+  "notes":         "...",
+  "failed_checks": [],               // e.g., ["ACCURACY", "COMPLETENESS"]
+  "retry_target":  "planner" | "synthesizer" | null
 }
 ```
 
-**Retry history:** Every audit (PASS or FAIL) appends `{attempt, draft_answer, audit_verdict, audit_notes}` to `retry_history` for debugging.
+**Retry history:** Every audit (PASS or FAIL) appends `{attempt, draft_answer, audit_verdict, audit_notes, retry_target}` to `retry_history` for debugging.
 
 **Routing:** The Auditor only writes state. Routing decisions (→ Planner or → Chat) are handled by the graph's `route_after_audit` conditional edge, not by the Auditor.
 
@@ -846,6 +876,7 @@ llm:
   provider: openai                    # top-level default; agents can override
   agents:
     chat:           { model: gpt-4.1-nano,  temperature: 0.3 }
+    chat_scope:     { model: gpt-4.1-nano,  temperature: 0.0 }
     planner:        { model: gpt-4.1-mini,  temperature: 0.0 }
     router:         { model: gpt-4.1-nano,  temperature: 0.0 }
     librarian:      { model: gpt-4.1-mini,  temperature: 0.0 }
@@ -887,7 +918,7 @@ api:
 **Per-agent provider override:** Any agent can add `provider: ollama` to use a local Ollama model instead of OpenAI. The top-level `provider` is the default.
 
 **Model selection rationale:**
-- **gpt-4.1-nano** for Chat and Router — fast, cheap, no complex reasoning needed (classification and dispatch)
+- **gpt-4.1-nano** for Chat, Chat scope filter, and Router — fast, cheap, no complex reasoning needed (classification, scope gating, and dispatch)
 - **gpt-4.1-mini** for Planner, Librarian, Data Scientist, Synthesizer — good balance of capability and cost for structured reasoning and query generation
 - **gpt-5-mini** for Auditor — highest capability for the most critical verification step; a missed error costs a full retry cycle or an incorrect answer
 
@@ -932,13 +963,14 @@ Single-page application served at `/static`. Two-panel layout:
 ### Trace Information
 
 Every `/chat` response includes a `trace` object with:
-- `retry_count`, `audit_verdict`, `audit_notes`
+- `retry_count`, `audit_verdict`, `audit_notes`, `retry_target`
 - `plan`, `task_results`, `synthesizer_output`
 - `chat_intent`, `rewritten_query`, `query_sent_to_planner`
 - `chat_formatted_response` (boolean)
 - `step_timings` (per-node elapsed_ms: classification_ms, formatting_ms, planning_ms, routing_ms, synthesis_ms, audit_ms)
 - `retry_history`, `planner_reasoning`
 - `prefilter_sources` (list of `{source_id, score, expanded_via_relationship}` — which sources the pre-filter selected and why)
+- `scope_result` — `{scope: "in_scope" | "out_of_scope", response: str}` when the Chat agent's scope filter call fired, `null` otherwise (fast-path greeting, retry exhaustion, delivery-only turns). Sourced from `core/scope_result.py`, which is cleared at the start of every `/chat` request so a fast-path turn cannot inherit a prior verdict.
 
 ### Session Management
 
@@ -970,6 +1002,7 @@ project/
 │   ├── manifest.py          # Manifest loader, cache, formatters
 │   ├── manifest_prefilter.py # RAG pre-filter over manifest source index
 │   ├── session_context.py   # Per-session user-fact store (module-level dict)
+│   ├── scope_result.py      # Per-session scope-call outcome for trace
 │   ├── data_context.py      # Runtime domain summary derived from manifest
 │   ├── registry.py          # Worker Registry (worker_type → callable)
 │   ├── retriever.py         # RetrieverInterface + ChromaRetriever

@@ -45,16 +45,19 @@ def route_after_chat(
 
 def route_after_audit(
     state: AgentState,
-) -> Literal["chat_node", "planner_node"]:
+) -> Literal["chat_node", "planner_node", "synthesizer_node"]:
     """
-    PASS                → chat_node    (release to user)
-    FAIL + retries < 3  → planner_node (retry cycle)
-    FAIL + retries >= 3 → chat_node    (graceful failure)
+    PASS                                                      → chat_node
+    FAIL + retries < 3 + retry_target == "synthesizer"        → synthesizer_node
+    FAIL + retries < 3 + retry_target == "planner" (or unset) → planner_node
+    FAIL + retries >= 3                                       → chat_node (graceful failure)
     """
     audit: AuditResult = state["audit_result"]
     if audit["verdict"] == "PASS":
         return "chat_node"
     if state["retry_count"] < 3:
+        if audit.get("retry_target") == "synthesizer":
+            return "synthesizer_node"
         return "planner_node"
     return "chat_node"
 
@@ -91,8 +94,9 @@ def build_graph() -> StateGraph:
         "auditor_node",
         route_after_audit,
         {
-            "chat_node":    "chat_node",
-            "planner_node": "planner_node",
+            "chat_node":        "chat_node",
+            "planner_node":     "planner_node",
+            "synthesizer_node": "synthesizer_node",
         },
     )
 
@@ -113,7 +117,7 @@ def test_routing():
     _base: dict = {
         "chat_intent":  "",
         "final_answer": "",
-        "audit_result": {"verdict": "PASS", "notes": ""},
+        "audit_result": {"verdict": "PASS", "notes": "", "retry_target": None},
         "retry_count":  0,
     }
 
@@ -147,19 +151,45 @@ def test_routing():
     # ── route_after_audit ─────────────────────────────────────────
 
     # PASS → chat_node
-    result = route_after_audit({**_base, "audit_result": {"verdict": "PASS", "notes": ""}, "retry_count": 0})
+    result = route_after_audit({**_base, "audit_result": {"verdict": "PASS", "notes": "", "retry_target": None}, "retry_count": 0})
     assert result == "chat_node", f"PASS must route to chat_node, got {result!r}"
     print("PASS: route_after_audit — PASS routes to chat_node")
 
-    # FAIL + retries remaining → planner_node
-    result = route_after_audit({**_base, "audit_result": {"verdict": "FAIL", "notes": "bad"}, "retry_count": 1})
-    assert result == "planner_node", f"FAIL with retries must route to planner_node, got {result!r}"
-    print("PASS: route_after_audit — FAIL with retries routes to planner_node")
+    # FAIL + retry_target="planner" + retries remaining → planner_node
+    result = route_after_audit({
+        **_base,
+        "audit_result": {"verdict": "FAIL", "notes": "bad", "retry_target": "planner"},
+        "retry_count":  1,
+    })
+    assert result == "planner_node", f"FAIL(planner) with retries must route to planner_node, got {result!r}"
+    print("PASS: route_after_audit — FAIL(retry_target=planner) with retries routes to planner_node")
 
-    # FAIL + retry_count >= 3 → chat_node (graceful failure)
-    result = route_after_audit({**_base, "audit_result": {"verdict": "FAIL", "notes": "bad"}, "retry_count": 3})
+    # FAIL + retry_target="synthesizer" + retries remaining → synthesizer_node
+    result = route_after_audit({
+        **_base,
+        "audit_result": {"verdict": "FAIL", "notes": "bad", "retry_target": "synthesizer"},
+        "retry_count":  1,
+    })
+    assert result == "synthesizer_node", f"FAIL(synthesizer) must route to synthesizer_node, got {result!r}"
+    print("PASS: route_after_audit — FAIL(retry_target=synthesizer) with retries routes to synthesizer_node")
+
+    # FAIL + missing retry_target → planner_node (default)
+    result = route_after_audit({
+        **_base,
+        "audit_result": {"verdict": "FAIL", "notes": "bad"},
+        "retry_count":  1,
+    })
+    assert result == "planner_node", f"FAIL without retry_target must default to planner_node, got {result!r}"
+    print("PASS: route_after_audit — FAIL with missing retry_target defaults to planner_node")
+
+    # FAIL + retry_count >= 3 → chat_node (graceful failure) regardless of retry_target
+    result = route_after_audit({
+        **_base,
+        "audit_result": {"verdict": "FAIL", "notes": "bad", "retry_target": "synthesizer"},
+        "retry_count":  3,
+    })
     assert result == "chat_node", f"FAIL exhausted must route to chat_node, got {result!r}"
-    print("PASS: route_after_audit — FAIL exhausted routes to chat_node")
+    print("PASS: route_after_audit — FAIL exhausted routes to chat_node regardless of retry_target")
 
     print("\nPASS: all routing tests passed")
 
@@ -214,13 +244,21 @@ def test_graph_e2e():
         "on flights exceeding 4 hours."
     )
 
-    # chat_node now makes two LLM calls per pipeline run:
-    #   call 1 (initial entry): classify intent — must return JSON
-    #   call 2 (format+deliver): format the auditor-verified answer — returns plain text
-    chat_classify_json = json.dumps({
-        "intent":          "PLAN",
-        "rewritten_query": "Can Noa fly Business Class?",
-        "response":        None,
+    # chat_node now makes three LLM calls across the pipeline:
+    #   call 1 (entry, scope filter):   must return scope JSON
+    #   call 2 (entry, reasoning call): must return reasoning JSON
+    #   call 3 (format+deliver):        formats auditor-verified answer (plain text)
+    chat_scope_json = json.dumps({"scope": "in_scope", "response": ""})
+    chat_reasoning_json = json.dumps({
+        "reasoning": {
+            "user_intent":        "look up flight class for Noa",
+            "decision_rationale": "subject is named, scope is clear",
+        },
+        "decision":               "PLAN",
+        "rewritten_query":        "Can Noa fly Business Class?",
+        "clarifying_question":    "",
+        "direct_response":        "",
+        "session_context_update": {},
     })
 
     def make_llm_mock(content: str) -> MagicMock:
@@ -231,22 +269,33 @@ def test_graph_e2e():
         llm.bind.return_value = llm   # .bind(max_tokens=...) returns self
         return llm
 
-    def make_chat_llm_mock() -> MagicMock:
-        """Returns a mock that serves classify JSON on call 1, formatted text on call 2."""
-        responses = [
-            MagicMock(content=chat_classify_json),
+    def make_chat_get_llm_side_effect():
+        """
+        Returns a side_effect for patched agents.chat.get_llm that routes
+        by agent_name: "chat_scope" serves scope JSON, "chat" serves
+        reasoning JSON then the formatted answer on the second call.
+        """
+        scope_llm = make_llm_mock(chat_scope_json)
+
+        chat_responses = [
+            MagicMock(content=chat_reasoning_json),
             MagicMock(content=chat_formatted),
         ]
-        call_count = {"n": 0}
+        chat_call_count = {"n": 0}
 
-        async def _side_effect(messages):
-            idx = call_count["n"]
-            call_count["n"] += 1
-            return responses[idx] if idx < len(responses) else responses[-1]
+        async def _chat_ainvoke(messages):
+            idx = chat_call_count["n"]
+            chat_call_count["n"] += 1
+            return chat_responses[idx] if idx < len(chat_responses) else chat_responses[-1]
 
-        llm = MagicMock()
-        llm.ainvoke = _side_effect
-        return llm
+        chat_llm = MagicMock()
+        chat_llm.ainvoke = _chat_ainvoke
+        chat_llm.bind.return_value = chat_llm
+
+        def _get_llm(agent_name):
+            return scope_llm if agent_name == "chat_scope" else chat_llm
+
+        return _get_llm
 
     # ── Fake worker callables for the router ─────────────────────
     # ds_result embeds MARKER_ROUTER in query_used — it flows into task_results
@@ -293,7 +342,7 @@ def test_graph_e2e():
         "retrieved_chunks":     [],
         "draft_answer":         "",
         "synthesizer_output":   "",
-        "audit_result":         {"verdict": "PASS", "notes": ""},
+        "audit_result":         {"verdict": "PASS", "notes": "", "retry_target": None},
         "retry_count":          0,
         "retry_notes":          "",
         "final_answer":         "",
@@ -327,7 +376,14 @@ def test_graph_e2e():
             stack.enter_context(patch("agents.router.get_worker",    side_effect=mock_get_worker))
             stack.enter_context(patch("agents.synthesizer.get_llm",  return_value=make_llm_mock(synthesizer_json)))
             stack.enter_context(patch("agents.auditor.get_llm",      return_value=make_llm_mock(auditor_json)))
-            stack.enter_context(patch("agents.chat.get_llm",         return_value=make_chat_llm_mock()))
+            stack.enter_context(patch("agents.chat.get_llm",         side_effect=make_chat_get_llm_side_effect()))
+            # data_context.get_data_context is called inside chat_node's scope call.
+            # The integration test does not exercise manifest parsing, so stub it
+            # with a short, deterministic paragraph.
+            stack.enter_context(patch(
+                "agents.chat.get_data_context",
+                return_value="The system answers questions about employees and travel policy.",
+            ))
 
             async for update in compiled_graph.astream(
                 initial_state,
