@@ -34,6 +34,7 @@ from core.manifest import get_manifest_detail_raw, get_manifest_index, get_manif
 from core.manifest_prefilter import get_last_prefilter_trace
 from core.prompt_capture import clear_captures, get_latest_prompts, get_mode as get_capture_mode
 from core.retriever import ChromaRetriever
+from core.scope_result import clear_scope_result, get_scope_result
 from core.session_context import get_session_context
 from core.state import AgentState, Message, SourceRef
 from graph import compiled_graph
@@ -104,6 +105,7 @@ class TraceInfo(BaseModel):
     retry_count:                  int
     audit_verdict:                Optional[str]            = None
     audit_notes:                  Optional[str]            = None
+    retry_target:                 Optional[str]            = None
     plan:                         Optional[List[dict]]     = None
     task_results:                 dict
     synthesizer_output:           str
@@ -118,6 +120,11 @@ class TraceInfo(BaseModel):
     chat_reasoning:               Optional[str]            = None
     chat_session_context_before:  Optional[Dict[str, Any]] = None
     chat_session_context_after:   Optional[Dict[str, Any]] = None
+    # Scope filter outcome for this /chat turn. Shape: {scope, response}.
+    # None when the fast-path greeting regex short-circuited before the scope
+    # call ran, and on any turn that otherwise skipped the scope call
+    # (retry exhaustion, delivery-only).
+    scope_result:                 Optional[Dict[str, Any]] = None
     # Populated only when tracing.capture_prompts is "full". In
     # "full_with_retries" mode each retry_history entry carries its own
     # agent_prompts so this stays None to avoid double-reporting.
@@ -281,6 +288,10 @@ async def chat(req: ChatRequest):
     # so we don't leak across queries. No-op when tracing is minimal.
     clear_captures(req.session_id)
 
+    # Reset the Chat agent's scope_result store so a fast-path greeting this
+    # turn doesn't inherit the previous turn's verdict.
+    clear_scope_result(req.session_id)
+
     history: list[Message] = list(_sessions.get(req.session_id, []))
 
     initial_state: AgentState = {
@@ -362,11 +373,13 @@ async def chat(req: ChatRequest):
         audit = final_state.get("audit_result") or {"verdict": "", "notes": ""}
         audit_verdict = audit.get("verdict", "")
         audit_notes = audit.get("notes", "")
+        retry_target = audit.get("retry_target")
         plan = [dict(t) for t in final_state.get("plan", [])]
         query_sent_to_planner = rewritten if rewritten else req.query
     else:
         audit_verdict = None
         audit_notes = None
+        retry_target = None
         plan = None
         query_sent_to_planner = None
 
@@ -382,6 +395,7 @@ async def chat(req: ChatRequest):
         retry_count=final_state.get("retry_count", 0),
         audit_verdict=audit_verdict,
         audit_notes=audit_notes,
+        retry_target=retry_target,
         plan=plan,
         task_results={k: dict(v) for k, v in final_state.get("task_results", {}).items()},
         synthesizer_output=synthesizer_output,
@@ -396,6 +410,7 @@ async def chat(req: ChatRequest):
         chat_reasoning=final_state.get("chat_reasoning") or None,
         chat_session_context_before=session_context_before,
         chat_session_context_after=session_context_after,
+        scope_result=get_scope_result(req.session_id),
         capture_mode=capture_mode,
         agent_prompts=agent_prompts_top,
     )
@@ -532,6 +547,12 @@ def test_api():
     assert isinstance(trace["step_timings"], dict), "step_timings must be a dict"
     assert "classification_ms" in trace["step_timings"], \
         "step_timings must include classification_ms for chat_node"
+    # scope_result trace field — present, None when the chat_node mock did not
+    # populate the scope_result store. The key must always appear in the
+    # response so the frontend can rely on its presence.
+    assert "scope_result" in trace, "trace must include scope_result field"
+    assert trace["scope_result"] is None, \
+        "scope_result must be None when the (mocked) chat_node never wrote one"
     # conversation_entry — slimmed: only turn_number, timestamp, original_query
     assert "conversation_entry" in body, "Response must include conversation_entry"
     ce = body["conversation_entry"]
@@ -543,6 +564,82 @@ def test_api():
                     "final_answer", "final_sources", "trace"):
         assert removed not in ce, f"slim conversation_entry must not include {removed}"
     print(f"PASS: POST /chat returns correct shape with enriched trace: {body['final_answer']}")
+
+    # ── Test 2b: scope_result surfaces in the trace when populated ─
+    from core.scope_result import set_scope_result as _set_sr, clear_scope_result as _clr_sr
+
+    async def _astream_with_scope(state, stream_mode=None, config=None):
+        # Simulate the Chat agent writing the scope_result store during the
+        # graph run. api.py must read this value after the graph completes.
+        _set_sr(state["session_id"], "out_of_scope", "I only answer questions about your data.")
+        yield {"chat_node": {
+            "final_answer":         "I only answer questions about your data.",
+            "final_sources":        [],
+            "session_id":           state["session_id"],
+            "conversation_history": [],
+            "chat_intent":          "DIRECT",
+            "rewritten_query":      "",
+            "retry_count":          0,
+            "audit_result":         {"verdict": "PASS", "notes": ""},
+            "plan":                 [],
+            "task_results":         {},
+            "synthesizer_output":   "",
+        }}
+
+    _sessions.pop("scope-session", None)
+    _conversation_log.pop("scope-session", None)
+    _clr_sr("scope-session")
+
+    with patch(patch_target) as mock_graph:
+        mock_graph.astream = _astream_with_scope
+        resp_scope = client.post(
+            "/chat",
+            json={"query": "Tell me a joke about cats.", "session_id": "scope-session"},
+        )
+
+    assert resp_scope.status_code == 200, f"Expected 200, got {resp_scope.status_code}: {resp_scope.text}"
+    trace_scope = resp_scope.json()["trace"]
+    assert trace_scope["scope_result"] == {
+        "scope":    "out_of_scope",
+        "response": "I only answer questions about your data.",
+    }, f"scope_result must surface verdict + response; got {trace_scope.get('scope_result')!r}"
+    print("PASS: scope_result written during graph run surfaces in /chat trace")
+
+    # ── Test 2c: /chat clears scope_result at entry (fast path case) ──
+    # Pre-populate the store; the /chat handler must wipe it before the graph
+    # runs. When the (mocked) graph does NOT touch the store, the trace field
+    # comes back None.
+    _set_sr("fastpath-session", "out_of_scope", "stale verdict from a prior turn")
+
+    async def _astream_noop(state, stream_mode=None, config=None):
+        yield {"chat_node": {
+            "final_answer":         "Hello! Ask me anything about your company data.",
+            "final_sources":        [],
+            "session_id":           state["session_id"],
+            "conversation_history": [],
+            "chat_intent":          "DIRECT",
+            "rewritten_query":      "",
+            "retry_count":          0,
+            "audit_result":         {"verdict": "PASS", "notes": ""},
+            "plan":                 [],
+            "task_results":         {},
+            "synthesizer_output":   "",
+        }}
+
+    _sessions.pop("fastpath-session", None)
+    _conversation_log.pop("fastpath-session", None)
+
+    with patch(patch_target) as mock_graph:
+        mock_graph.astream = _astream_noop
+        resp_fast = client.post(
+            "/chat",
+            json={"query": "hi", "session_id": "fastpath-session"},
+        )
+
+    assert resp_fast.status_code == 200
+    assert resp_fast.json()["trace"]["scope_result"] is None, \
+        "/chat must clear scope_result at entry; fast-path turns must not leak the prior verdict"
+    print("PASS: /chat clears scope_result at entry so fast-path turns report null")
 
     # ── Test 3: POST /chat when graph raises → HTTP 500 ──────────
     with patch(patch_target) as mock_graph:
