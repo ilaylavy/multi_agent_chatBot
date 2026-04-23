@@ -520,13 +520,15 @@ async def chat_node(state: AgentState) -> dict:
             {"role": "user",   "content": scope_user_message},
         ])
 
-        scope_verdict = "in_scope"
-        scope_reply   = ""
+        scope_verdict  = "in_scope"
+        scope_reply    = ""
+        scope_evidence = ""
         try:
-            scope_data   = parse_llm_json(scope_response.content)
-            raw_scope    = (scope_data.get("scope") or "").strip().lower()
-            scope_verdict = raw_scope if raw_scope in ("in_scope", "out_of_scope") else "in_scope"
-            scope_reply   = (scope_data.get("response") or "").strip()
+            scope_data     = parse_llm_json(scope_response.content)
+            raw_scope      = (scope_data.get("scope") or "").strip().lower()
+            scope_verdict  = raw_scope if raw_scope in ("in_scope", "out_of_scope") else "in_scope"
+            scope_reply    = (scope_data.get("response") or "").strip()
+            scope_evidence = (scope_data.get("evidence") or "").strip()
         except ValueError as exc:
             logger.warning(
                 "[%s] scope parse failed — defaulting to in_scope. Raw: %s",
@@ -537,11 +539,11 @@ async def chat_node(state: AgentState) -> dict:
         # Written only on paths that actually made the scope call — the fast
         # greeting short-circuits above and therefore leaves scope_result unset
         # (api.py clears the store at the start of every /chat request).
-        set_scope_result(session_id, scope_verdict, scope_reply)
+        set_scope_result(session_id, scope_verdict, scope_reply, scope_evidence)
 
         logger.debug(
-            "[%s] Chat scope — verdict=%s has_reply=%s",
-            session_id, scope_verdict, bool(scope_reply),
+            "[%s] Chat scope — verdict=%s has_reply=%s has_evidence=%s",
+            session_id, scope_verdict, bool(scope_reply), bool(scope_evidence),
         )
 
         if scope_verdict == "out_of_scope":
@@ -756,9 +758,13 @@ def test_chat():
             "session_context_update": session_context_update or {},
         })
 
-    def _scope_payload(scope: str, response: str = "") -> str:
+    def _scope_payload(scope: str, response: str = "", evidence: str = "") -> str:
         import json as _json
-        return _json.dumps({"scope": scope, "response": response})
+        return _json.dumps({
+            "evidence": evidence,
+            "scope":    scope,
+            "response": response,
+        })
 
     def _mock_llm_from_content(content: str) -> MagicMock:
         resp = MagicMock()
@@ -828,8 +834,8 @@ def test_chat():
     chat_llm.ainvoke.assert_awaited_once()
     # Scope call persists its verdict in the scope_result store for the trace.
     sr = get_scope_result("test-session-001")
-    assert sr == {"scope": "in_scope", "response": ""}, \
-        f"scope_result must record in_scope for this path; got {sr!r}"
+    assert sr == {"evidence": "", "scope": "in_scope", "response": ""}, \
+        f"scope_result must record in_scope (empty evidence) for this path; got {sr!r}"
     hist = result_direct["conversation_history"]
     assert hist[-1] == {"role": "assistant", "content": direct_response}
     print("PASS: DIRECT from reasoning writes final_answer + chat_reasoning; scope_result records in_scope verdict")
@@ -1296,8 +1302,9 @@ def test_chat():
 
     # ── Test 22: out_of_scope short-circuits — reasoning LLM never called ──
     _reset_sid()
-    oos_reply = "I only answer questions about the ingested company data."
-    scope_llm_oos = _mock_llm_from_content(_scope_payload("out_of_scope", oos_reply))
+    oos_reply    = "I only answer questions about the ingested company data."
+    oos_evidence = "User asked for a joke about cats — unrelated to any topic in DATA CONTEXT."
+    scope_llm_oos = _mock_llm_from_content(_scope_payload("out_of_scope", oos_reply, oos_evidence))
     reasoning_llm_oos = MagicMock(); reasoning_llm_oos.ainvoke = AsyncMock()
 
     def selector_oos(agent_name):
@@ -1313,8 +1320,11 @@ def test_chat():
     reasoning_llm_oos.ainvoke.assert_not_called()
     # Scope call fired and recorded verdict + friendly reply in scope_result.
     sr_oos = get_scope_result("test-session-001")
-    assert sr_oos == {"scope": "out_of_scope", "response": oos_reply}, \
-        f"scope_result must record out_of_scope verdict + reply; got {sr_oos!r}"
+    assert sr_oos == {
+        "evidence": oos_evidence,
+        "scope":    "out_of_scope",
+        "response": oos_reply,
+    }, f"scope_result must record out_of_scope verdict + reply + evidence; got {sr_oos!r}"
     # History gets user + assistant appended
     hist = result_oos["conversation_history"]
     assert hist[-2] == {"role": "user", "content": "Tell me a joke about cats."}
@@ -1348,6 +1358,11 @@ def test_chat():
     bad_scope_state = {**base_state, "original_query": "What is the policy?"}
     result_bad_scope = _run(bad_scope_state, selector_bad_scope)
     assert result_bad_scope["chat_intent"] == "PLAN"
+    # Parse-failure path must default scope_result to in_scope with empty
+    # response AND empty evidence — the LLM output was unusable.
+    sr_bad = get_scope_result("test-session-001")
+    assert sr_bad == {"evidence": "", "scope": "in_scope", "response": ""}, \
+        f"scope parse failure must default evidence to ''; got {sr_bad!r}"
     good_reasoning_llm.ainvoke.assert_awaited_once()
     print("PASS: scope parse failure defaults to in_scope; reasoning call still runs")
 

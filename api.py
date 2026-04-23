@@ -571,7 +571,12 @@ def test_api():
     async def _astream_with_scope(state, stream_mode=None, config=None):
         # Simulate the Chat agent writing the scope_result store during the
         # graph run. api.py must read this value after the graph completes.
-        _set_sr(state["session_id"], "out_of_scope", "I only answer questions about your data.")
+        _set_sr(
+            state["session_id"],
+            "out_of_scope",
+            "I only answer questions about your data.",
+            "User asked for a cat joke — unrelated to any topic in DATA CONTEXT.",
+        )
         yield {"chat_node": {
             "final_answer":         "I only answer questions about your data.",
             "final_sources":        [],
@@ -600,10 +605,11 @@ def test_api():
     assert resp_scope.status_code == 200, f"Expected 200, got {resp_scope.status_code}: {resp_scope.text}"
     trace_scope = resp_scope.json()["trace"]
     assert trace_scope["scope_result"] == {
+        "evidence": "User asked for a cat joke — unrelated to any topic in DATA CONTEXT.",
         "scope":    "out_of_scope",
         "response": "I only answer questions about your data.",
-    }, f"scope_result must surface verdict + response; got {trace_scope.get('scope_result')!r}"
-    print("PASS: scope_result written during graph run surfaces in /chat trace")
+    }, f"scope_result must surface verdict + response + evidence; got {trace_scope.get('scope_result')!r}"
+    print("PASS: scope_result (with evidence) written during graph run surfaces in /chat trace")
 
     # ── Test 2c: /chat clears scope_result at entry (fast path case) ──
     # Pre-populate the store; the /chat handler must wipe it before the graph

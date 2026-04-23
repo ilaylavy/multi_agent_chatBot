@@ -1221,8 +1221,9 @@ function renderScopeResult(scopeResult) {
     </details>`;
   }
 
-  const verdict = scopeResult.scope || 'unknown';
+  const verdict  = scopeResult.scope || 'unknown';
   const response = scopeResult.response || '';
+  const evidence = scopeResult.evidence || '';
   const verdictColor = verdict === 'in_scope'
     ? '#16a34a'                        // same green as task-badge-ok
     : (verdict === 'out_of_scope' ? '#dc2626'  // same red as task-badge-err
@@ -1230,6 +1231,9 @@ function renderScopeResult(scopeResult) {
   const badge = `<span class="task-badge" style="background:${verdictColor};color:#fff">${esc(verdict)}</span>`;
 
   const rows = [
+    ['Evidence', evidence
+      ? esc(evidence)
+      : '<em style="color:var(--pico-muted-color)">(none)</em>'],
     ['Verdict',  badge],
     ['Response', response
       ? esc(response)

@@ -20,6 +20,7 @@ Semantics:
 
 Value shape:
   {
+    "evidence": "" | "one sentence from the scope LLM describing what in the user message and data context triggered the decision",
     "scope":    "in_scope" | "out_of_scope",
     "response": "" | "short friendly reply when out_of_scope"
   }
@@ -48,12 +49,18 @@ def get_scope_result(session_id: str) -> Optional[dict]:
     return dict(value)
 
 
-def set_scope_result(session_id: str, scope: str, response: str) -> None:
+def set_scope_result(
+    session_id: str,
+    scope: str,
+    response: str,
+    evidence: str = "",
+) -> None:
     """Record the scope call outcome for the session.
 
     Overwrites any previous value. `scope` must be "in_scope" or
     "out_of_scope"; callers outside `agents/chat.py` should not be writing
-    here.
+    here. `evidence` is the scope LLM's one-sentence justification and
+    defaults to "" so legacy callsites stay compatible.
     """
     if scope not in ("in_scope", "out_of_scope"):
         logger.warning(
@@ -61,10 +68,14 @@ def set_scope_result(session_id: str, scope: str, response: str) -> None:
             session_id, scope,
         )
         scope = "in_scope"
-    _results[session_id] = {"scope": scope, "response": response or ""}
+    _results[session_id] = {
+        "evidence": evidence or "",
+        "scope":    scope,
+        "response": response or "",
+    }
     logger.debug(
-        "[%s] scope_result recorded: scope=%s has_response=%s",
-        session_id, scope, bool(response),
+        "[%s] scope_result recorded: scope=%s has_response=%s has_evidence=%s",
+        session_id, scope, bool(response), bool(evidence),
     )
 
 
@@ -89,13 +100,23 @@ def test_scope_result():
     # 1. Unset session returns None
     assert get_scope_result(sid) is None
 
-    # 2. set_scope_result stores the value
+    # 2. set_scope_result stores the value (evidence defaults to "")
     set_scope_result(sid, "in_scope", "")
-    assert get_scope_result(sid) == {"scope": "in_scope", "response": ""}
-
-    # 3. Overwrite replaces prior value
-    set_scope_result(sid, "out_of_scope", "I only answer questions about the data.")
     assert get_scope_result(sid) == {
+        "evidence": "",
+        "scope":    "in_scope",
+        "response": "",
+    }
+
+    # 3. Overwrite replaces prior value; evidence round-trips
+    set_scope_result(
+        sid,
+        "out_of_scope",
+        "I only answer questions about the data.",
+        "User asked about sports, which is unrelated to any topic in DATA CONTEXT.",
+    )
+    assert get_scope_result(sid) == {
+        "evidence": "User asked about sports, which is unrelated to any topic in DATA CONTEXT.",
         "scope":    "out_of_scope",
         "response": "I only answer questions about the data.",
     }
@@ -125,6 +146,16 @@ def test_scope_result():
     # 8. None response is normalized to empty string
     set_scope_result(sid, "in_scope", None)  # type: ignore[arg-type]
     assert get_scope_result(sid)["response"] == ""
+
+    # 9. None evidence is normalized to empty string
+    set_scope_result(sid, "in_scope", "", None)  # type: ignore[arg-type]
+    assert get_scope_result(sid)["evidence"] == ""
+
+    # 10. Legacy 3-arg callers still work (evidence defaults to "")
+    set_scope_result(sid, "in_scope", "legacy call")
+    legacy = get_scope_result(sid)
+    assert legacy["response"] == "legacy call"
+    assert legacy["evidence"] == ""
 
     clear_scope_result(sid)
     clear_scope_result("other-sid")
