@@ -24,7 +24,7 @@ pdfs:
     summary: Outlines daily meal and incidental expense allowances by clearance level,
       including rules for claims exceeding per diem limits.
   - heading: 'Section 5: Expense Reimbursement Process'
-    summary: Describes the submission timeline, receipt requirements, approval thresholds,
+    summary: Describes submission deadlines, receipt requirements, approval thresholds,
       and payment procedures for travel expense reimbursements.
   tags:
   - corporate travel policy
@@ -35,8 +35,8 @@ pdfs:
   - expense reimbursement
   - clearance levels
   - travel expense approval
-  - travel receipts
-  - travel reimbursement process
+  - corporate travel guidelines
+  - travel receipts and claims
   notes: ''
 - id: hr_handbook_v3
   filename: hr_handbook_v3.pdf
@@ -45,16 +45,16 @@ pdfs:
   sections:
   - heading: 'Chapter 1: Onboarding'
     summary: Details the onboarding process including required documents, IT setup,
-      and initial employee orientation tasks.
+      and initial training and meetings for new employees.
   - heading: 'Chapter 2: Leave Policy'
     summary: Describes leave entitlements based on clearance levels, procedures for
       requesting leave, and specifics on annual, sick, and parental leave.
   - heading: 'Chapter 3: Performance Reviews'
     summary: Explains the biannual performance review process, rating scale, and consequences
-      including performance improvement plans and promotion eligibility.
+      including performance improvement plans and rewards.
   - heading: 'Chapter 4: Code of Conduct'
     summary: Covers confidentiality obligations, conflict of interest disclosures,
-      and the disciplinary process including steps and grounds for immediate termination.
+      and the disciplinary process including steps and consequences for misconduct.
   tags:
   - employee onboarding
   - leave policy
@@ -64,8 +64,8 @@ pdfs:
   - conflict of interest
   - disciplinary process
   - IT setup
+  - compliance training
   - employee performance ratings
-  - parental leave
   notes: ''
 - id: it_security_policy
   filename: it_security_policy.pdf
@@ -80,7 +80,7 @@ pdfs:
       associated access, storage, and transmission controls.
   - heading: 'Section 3: Security Incident Reporting'
     summary: Specifies the definition of security incidents, reporting deadlines,
-      reporting methods, immediate actions, and post-incident procedures.
+      reporting methods, immediate response actions, and post-incident review procedures.
   - heading: 'Section 4: Data Access Matrix'
     summary: Provides a matrix of data access permissions by clearance level and outlines
       procedures for requesting and approving access outside the matrix.
@@ -96,8 +96,8 @@ pdfs:
   - data access control
   - incident severity levels
   - corporate data protection
-  - access clearance levels
-  - security incident response
+  - access clearance
+  - incident response procedures
   notes: ''
 - id: finance_policy_2024
   filename: finance_policy_2024.pdf
@@ -114,7 +114,7 @@ pdfs:
     summary: Details submission timelines, processing times, international expense
       rules, dispute processes, and cross-references to travel policies for reimbursements.
   - heading: 'Section 4: Vendor Payment Terms'
-    summary: Outlines payment terms for standard and preferred vendors, small purchase
+    summary: Describes payment terms for standard and preferred vendors, small purchase
       rules, late payment penalties, and vendor dispute escalation procedures.
   tags:
   - expense approval thresholds
@@ -187,13 +187,13 @@ tables:
     - USD
     description: Currency in which the salary is denominated
   relationships:
-  - from_column: department
-    to_table: employees
-    to_column: department
-    verified: true
   - from_column: clearance_level
     to_table: employees
     to_column: clearance_level
+    verified: true
+  - from_column: department
+    to_table: employees
+    to_column: department
     verified: true
   - from_column: department
     to_table: projects
@@ -293,13 +293,13 @@ tables:
     description: Employee ID of the manager supervising this employee, nullable if
       no manager
   relationships:
-  - from_column: department
-    to_table: salary_bands
-    to_column: department
-    verified: true
   - from_column: clearance_level
     to_table: salary_bands
     to_column: clearance_level
+    verified: true
+  - from_column: department
+    to_table: salary_bands
+    to_column: department
     verified: true
   - from_column: employee_id
     to_table: training_records
@@ -474,7 +474,7 @@ tables:
     min: 1
     max: 10
     format: integer
-    description: Identifier of the employee leading the project
+    description: Identifier for the employee leading the project
   - name: budget
     type: integer
     nullable: false

@@ -51,7 +51,7 @@ feeds a chat agent's out-of-scope detection: it tells the agent what kinds
 of questions fall inside the system's knowledge.
 
 Requirements:
-  - Produce ONE paragraph, 2 to 4 sentences, in plain natural language.
+  - Produce ONE paragraph, 4 to 6 sentences, in plain natural language.
   - Describe the DOMAINS, TOPICS, and KINDS OF QUESTIONS the system can
     answer. Speak in general terms a non-technical reader would understand.
   - Do NOT name any specific source, file, table, column, entity, or
