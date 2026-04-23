@@ -90,8 +90,9 @@ out_of_scope means the system ignores the user.
 
 Respond with ONLY JSON:
 {
+  "evidence": "one sentence describing what in the USER MESSAGE and the DATA CONTEXT triggered your decision",
   "scope": "in_scope" | "out_of_scope",
-  "response": "short friendly reply when out_of_scope, empty string when in_scope"
+  "response": "empty string when in_scope, short friendly reply when out_of_scope"
 }
 """
 

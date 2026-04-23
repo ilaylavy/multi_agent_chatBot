@@ -17,12 +17,12 @@ pdfs:
   - advance flight booking requirements and exceptions
   - hotel nightly reimbursement limits by clearance level
   - per diem meal and incidental expense rates
-  - expense claim submission deadlines and procedures
+  - travel expense claim submission deadlines
   - receipt requirements for expense claims
   - approval thresholds for travel expenses
-  - reimbursement payment timelines and dispute process
-  - travel policy compliance rules
-  - annual per diem rate adjustments
+  - reimbursement processing timelines
+  - dispute procedures for travel reimbursements
+  - annual adjustment of per diem rates based on CPI
   notes: ''
 - id: hr_handbook_v3
   name: Hr Handbook V3
@@ -31,15 +31,14 @@ pdfs:
   contains:
   - onboarding checklist requirements
   - required employment documents for new hires
-  - IT provisioning and security protocols
+  - IT provisioning and security setup policies
   - leave entitlements by clearance level
   - leave request procedures and advance notice rules
-  - sick leave certification requirements
-  - parental leave options and duration
+  - annual, sick, and parental leave details
   - performance review schedule and rating criteria
   - performance improvement plan guidelines
   - confidentiality and non-disclosure obligations
-  - conflict of interest disclosure procedures
+  - conflict of interest disclosure requirements
   - disciplinary action stages and gross misconduct policies
   notes: ''
 - id: it_security_policy
@@ -51,13 +50,13 @@ pdfs:
   - password complexity and rotation rules
   - multi-factor authentication enforcement
   - data classification categories and handling rules
-  - security incident definition and reporting procedures
-  - incident reporting deadlines and contact methods
-  - immediate response actions for security incidents
+  - security incident definition and reporting deadlines
+  - incident reporting channels and immediate response steps
   - data access permissions by clearance level
-  - temporary elevated access approval process
-  - security incident severity classification and escalation
+  - temporary elevated access procedures
+  - security incident severity levels and escalation protocols
   - post-incident review and reporting requirements
+  - encryption and storage requirements for restricted data
   notes: ''
 - id: finance_policy_2024
   name: Finance Policy 2024
@@ -73,9 +72,10 @@ pdfs:
   - budget overrun justification and approvals
   - expense reimbursement submission and processing
   - international expense pre-approval and currency conversion
-  - vendor invoice payment terms and discounts
-  - late payment penalty calculations
-  - vendor dispute escalation process
+  - reimbursement dispute appeal process
+  - vendor invoice payment terms and penalties
+  - small purchase payment procedures
+  - vendor dispute escalation timelines
   notes: ''
 tables:
 - id: employees
@@ -88,7 +88,8 @@ tables:
   - department assignments
   - security clearance levels
   - hire dates
-  - manager-subordinate relationships
+  - manager relationships
+  - organizational hierarchy
   - employee identifiers
   notes: ''
 - id: salary_bands
@@ -99,53 +100,53 @@ tables:
   - salary ranges
   - clearance levels
   - department salary data
-  - minimum salary
-  - maximum salary
-  - salary currency
+  - minimum salaries
+  - maximum salaries
   - organizational departments
-  - security clearance categories
+  - security clearance salary
+  - salary currency
   notes: ''
 - id: training_records
   name: Training Records
-  summary: This table records employee training completions, including training types,
-    dates, status, and scores.
+  summary: This table records employee training completion details including training
+    type, dates, status, and scores.
   contains:
   - employee training records
   - training completion dates
-  - training expiration tracking
-  - training status information
+  - training expiry tracking
+  - training status monitoring
   - training scores
-  - employee training history
-  - compliance training data
+  - employee compliance training
   - training course types
+  - certification validity periods
   notes: ''
 - id: projects
   name: Projects
   summary: This table contains detailed information about various departmental projects
     including their budgets, timelines, statuses, and lead employees.
   contains:
+  - project identifiers
   - project names
   - department assignments
+  - project lead employee IDs
   - project budgets
   - project expenditures
   - project statuses
   - project start dates
   - project end dates
-  - project leadership
-  - project timelines
   notes: ''
 relationships:
 - sources:
   - employees
   - salary_bands
-  shared_key: department
-  description: tables share joinable key (department)
+  shared_key: clearance_level
+  description: tables share joinable key (clearance_level)
   verified: true
 - sources:
   - employees
   - salary_bands
-  shared_key: clearance_level
-  description: tables share joinable key (clearance_level)
+  shared_key: department
+  description: tables share joinable key (department)
   verified: true
 - sources:
   - projects
@@ -183,11 +184,14 @@ relationships:
   shared_key: employee_id/lead_employee_id
   description: tables share joinable key (employee_id/lead_employee_id)
   verified: true
-data_context: This system can assist with questions about company policies related
-  to travel, human resources, IT security, and finance, including details on employee
-  entitlements, procedures, and compliance rules. It also provides information about
-  employees, their roles, security clearances, training history, salary ranges, and
-  project involvement within the organization. You can inquire about guidelines for
-  expense approvals, leave requests, performance reviews, security protocols, project
-  budgets, and employee development, as well as how these elements interrelate across
-  departments and clearance levels.
+data_context: This system can assist with questions related to company policies on
+  travel, finance, human resources, and information security, providing guidance on
+  rules for employee travel arrangements, expense reimbursements, leave entitlements,
+  performance reviews, and data protection measures. It can also answer inquiries
+  about employee information such as department assignments, security clearances,
+  salary ranges, training completion, and project involvement. Whether you need to
+  understand approval processes, budget limits, compliance requirements, or organizational
+  structure, the system offers insights based on internal corporate guidelines and
+  records. It is well-suited for clarifying procedures, eligibility criteria, and
+  timelines associated with employee management, financial controls, and security
+  protocols within a workplace setting.
